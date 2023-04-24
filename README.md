@@ -21,7 +21,7 @@ import torch
 from recurrent_memory_transformer_pytorch import RecurrentMemoryTransformer
 
 model = RecurrentMemoryTransformer(
-    num_tokens = 256,                 # number of tokens
+    num_tokens = 20000,               # number of tokens
     num_memory_tokens = 128,          # number of memory tokens, this will determine the bottleneck for information being passed to the future
     dim = 512,                        # model dimensions
     depth = 6,                        # transformer depth
@@ -34,9 +34,9 @@ model = RecurrentMemoryTransformer(
 
 x = torch.randint(0, 256, (1, 1024))
 
-logits1, mem1 = model(x)        # (1, 1024, 512), (1, 128, 512)
-logits2, mem2 = model(x, mem1)  # (1, 1024, 512), (1, 128, 512)
-logits3, mem3 = model(x, mem2)  # (1, 1024, 512), (1, 128, 512)
+logits1, mem1 = model(x)        # (1, 1024, 20000), (1, 128, 512)
+logits2, mem2 = model(x, mem1)  # (1, 1024, 20000), (1, 128, 512)
+logits3, mem3 = model(x, mem2)  # (1, 1024, 20000), (1, 128, 512)
 
 # and so on ...
 
