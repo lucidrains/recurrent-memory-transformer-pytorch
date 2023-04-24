@@ -111,7 +111,9 @@ class RecurrentMemoryTransformer(nn.Module):
         self.pos_emb = nn.Embedding(seq_len, dim)
 
         self.num_memory_tokens = num_memory_tokens
+
         self.memory_tokens = nn.Parameter(torch.randn(num_memory_tokens, dim))
+        nn.init.normal_(self.memory_tokens, std = 0.02)
 
         self.layers = nn.ModuleList([])
 
