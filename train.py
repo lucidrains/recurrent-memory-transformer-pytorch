@@ -44,7 +44,7 @@ model = RecurrentMemoryTransformer(
     depth = 6,
     dim_head = 64,
     heads = 8,
-    seq_len = 1024,
+    seq_len = 256,
     use_flash_attn = True,
     num_memory_tokens = 128
 )
@@ -110,6 +110,6 @@ for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10.0, desc="training"):
         prime = decode_tokens(inp)
         print(f"%s \n\n %s", (prime, "*" * 100))
 
-        # sample = model.generate(length = GENERATE_LENGTH)
-        # output_str = decode_tokens(sample[0])
-        # print(output_str, "\n")
+        sample = model.generate(inp[None, :], length = GENERATE_LENGTH)
+        output_str = decode_tokens(sample[0])
+        print(output_str, "\n")

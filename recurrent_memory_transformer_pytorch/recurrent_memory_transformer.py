@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn.functional as F
 from torch import nn, einsum
@@ -16,6 +18,37 @@ def default(vals):
         if exists(val):
             return val
     return None
+
+def eval_decorator(fn):
+    def inner(self, *args, **kwargs):
+        was_training = self.training
+        self.eval()
+        out = fn(self, *args, **kwargs)
+        self.train(was_training)
+        return out
+    return inner
+
+def divisible_by(numer, denom):
+    return (numer % denom) == 0
+
+# sampling helpers
+
+def log(t, eps = 1e-20):
+    return torch.log(t.clamp(min = eps))
+
+def gumbel_noise(t):
+    noise = torch.zeros_like(t).uniform_(0, 1)
+    return -log(-log(noise))
+
+def gumbel_sample(t, temperature = 1., dim = -1):
+    return ((t / max(temperature, 1e-10)) + gumbel_noise(t)).argmax(dim = dim)
+
+def top_k(logits, thres = 0.9):
+    k = math.ceil((1 - thres) * logits.shape[-1])
+    val, ind = torch.topk(logits, k)
+    probs = torch.full_like(logits, float('-inf'))
+    probs.scatter_(1, ind, val)
+    return probs
 
 # rotary embedding
 
@@ -230,10 +263,36 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
     @torch.no_grad()
     def generate(
         self,
-        length
+        prime,
+        *,
+        length,
+        memories = None,
+        temperature = 1.,
+        filter_thres = 0.9,
     ):
         assert self.transformer.causal, 'only autoregressive transformers can generate'
-        raise NotImplementedError
+
+        start_len = prime.shape[-1]
+
+        output = prime
+
+        for ind in range(length - start_len):
+
+            logits, next_memories = self.forward(output, memories)
+
+            logits = logits[:, -1]
+
+            filtered_logits = top_k(logits, thres = filter_thres)
+            sampled = gumbel_sample(filtered_logits, temperature = temperature)
+            sampled = rearrange(sampled, 'b -> b 1')
+
+            output = torch.cat((output, sampled), dim = -1)
+
+            if divisible_by(output.shape[-1] - 1, self.seq_len):
+                memories = next_memories
+
+        output = output[:, start_len:]
+        return output
 
     def forward(
         self,
