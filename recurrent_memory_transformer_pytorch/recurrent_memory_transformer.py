@@ -127,8 +127,7 @@ class RecurrentMemoryTransformer(nn.Module):
         dim_head = 64,
         heads = 8,
         ff_mult = 4,
-        use_flash_attn = False,
-        sum_past_memories_to_future = False
+        use_flash_attn = False
     ):
         super().__init__()
         self.causal = causal
@@ -149,8 +148,6 @@ class RecurrentMemoryTransformer(nn.Module):
 
         self.memory_tokens = nn.Parameter(torch.randn(num_memory_tokens, dim))
         nn.init.normal_(self.memory_tokens, std = 0.02)
-
-        self.sum_past_memories_to_future  = sum_past_memories_to_future
 
         # layers
 
@@ -188,6 +185,7 @@ class RecurrentMemoryTransformer(nn.Module):
         # concat memories into the future, to be passed onto the next segment
 
         future_memories = repeat(self.memory_tokens, 'm d -> b m d', b = b)
+        x = torch.cat((x, future_memories), dim = -2)
 
         # concat past memories, if needed
 
@@ -196,11 +194,6 @@ class RecurrentMemoryTransformer(nn.Module):
         if exists(past_memories):
             x = torch.cat((past_memories, x), dim = -2)
             past_length = mem_length
-
-            if self.sum_past_memories_to_future:
-                future_memories = future_memories + past_memories
-
-        x = torch.cat((x, future_memories), dim = -2)
 
         # rotary embedding - offset main positions by 10000, and keep all memories at position 0
 
