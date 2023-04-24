@@ -96,6 +96,7 @@ class RecurrentMemoryTransformer(nn.Module):
         depth,
         num_memory_tokens,
         seq_len,
+        causal = True,
         max_segments = 7,   # in the paper, they went up to 7 segments
         dim_head = 64,
         heads = 8,
@@ -119,6 +120,7 @@ class RecurrentMemoryTransformer(nn.Module):
                 Attention(
                     dim = dim,
                     dim_head = dim_head,
+                    causal = causal,
                     heads = heads,
                     use_flash_attn = use_flash_attn
                 ),

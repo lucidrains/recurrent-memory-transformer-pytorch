@@ -25,6 +25,7 @@ model = RecurrentMemoryTransformer(
     num_memory_tokens = 128,          # number of memory tokens, this will determine the bottleneck for information being passed to the future
     dim = 512,                        # model dimensions
     depth = 6,                        # transformer depth
+    causal = True,                    # autoregressive or not
     dim_head = 64,                    # dimension per head
     heads = 8,                        # heads
     seq_len = 1024,                   # sequence length of a segment
