@@ -45,10 +45,11 @@ logits3, mem3 = model(x, mem2)  # (1, 1024, 512), (1, 128, 512)
 ## Todo
 
 - [ ] add a wrapper that does simple memory checkpointing for starters
-- [ ] relative positional encoding, with positional encoding for each recurrence step
 - [ ] add an axial attention down the past memories axis as an option
 - [ ] add the memory replay backprop technique from memformer paper
 - [ ] for autoregressive, run experiments between future memories being causal masked or not
+- [ ] give network awareness of which segment it is at through a segment positional embedding
+- [x] relative positional encoding
 
 ## Alternatives
 
@@ -60,21 +61,21 @@ logits3, mem3 = model(x, mem2)  # (1, 1024, 512), (1, 128, 512)
 
 ```bibtex
 @inproceedings{bulatov2022recurrent,
-  title   = {Recurrent Memory Transformer},
-  author  = {Aydar Bulatov and Yuri Kuratov and Mikhail Burtsev},
+  title     = {Recurrent Memory Transformer},
+  author    = {Aydar Bulatov and Yuri Kuratov and Mikhail Burtsev},
   booktitle = {Advances in Neural Information Processing Systems},
-  editor  = {Alice H. Oh and Alekh Agarwal and Danielle Belgrave and Kyunghyun Cho},
-  year    = {2022},
-  url     = {https://openreview.net/forum?id=Uynr3iPhksa}
+  editor    = {Alice H. Oh and Alekh Agarwal and Danielle Belgrave and Kyunghyun Cho},
+  year      = {2022},
+  url       = {https://openreview.net/forum?id=Uynr3iPhksa}
 }
 ```
 
 ```bibtex
 @misc{bulatov2023scaling,
-  title   = {Scaling Transformer to 1M tokens and beyond with RMT}, 
-  author  = {Aydar Bulatov and Yuri Kuratov and Mikhail S. Burtsev},
-  year    = {2023},
-  eprint  = {2304.11062},
+  title     = {Scaling Transformer to 1M tokens and beyond with RMT},
+  author    = {Aydar Bulatov and Yuri Kuratov and Mikhail S. Burtsev},
+  year      = {2023},
+  eprint    = {2304.11062},
   archivePrefix = {arXiv},
   primaryClass = {cs.CL}
 }
@@ -82,9 +83,29 @@ logits3, mem3 = model(x, mem2)  # (1, 1024, 512), (1, 128, 512)
 
 ```bibtex
 @inproceedings{dao2022flashattention,
-  title   = {Flash{A}ttention: Fast and Memory-Efficient Exact Attention with {IO}-Awareness},
-  author  = {Dao, Tri and Fu, Daniel Y. and Ermon, Stefano and Rudra, Atri and R{\'e}, Christopher},
+  title     = {Flash{A}ttention: Fast and Memory-Efficient Exact Attention with {IO}-Awareness},
+  author    = {Dao, Tri and Fu, Daniel Y. and Ermon, Stefano and Rudra, Atri and R{\'e}, Christopher},
   booktitle = {Advances in Neural Information Processing Systems},
-  year    = {2022}
+  year      = {2022}
+}
+```
+
+```bibtex
+@misc{shazeer2020glu,
+    title   = {GLU Variants Improve Transformer},
+    author  = {Noam Shazeer},
+    year    = {2020},
+    url     = {https://arxiv.org/abs/2002.05202}
+}
+```
+
+```bibtex
+@misc{su2021roformer,
+    title   = {RoFormer: Enhanced Transformer with Rotary Position Embedding},
+    author  = {Jianlin Su and Yu Lu and Shengfeng Pan and Bo Wen and Yunfeng Liu},
+    year    = {2021},
+    eprint  = {2104.09864},
+    archivePrefix = {arXiv},
+    primaryClass = {cs.CL}
 }
 ```

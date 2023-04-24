@@ -17,6 +17,26 @@ def default(vals):
             return val
     return None
 
+# rotary embedding
+
+class RotaryEmbedding(nn.Module):
+    def __init__(self, dim, theta = 64000):
+        super().__init__()
+        inv_freq = 1. / (theta ** (torch.arange(0, dim, 2).float() / dim))
+        self.register_buffer('inv_freq', inv_freq)
+
+    def forward(self, positions):
+        freqs = torch.einsum('i , j -> i j', positions, self.inv_freq)
+        freqs = torch.cat((freqs, freqs), dim = -1)
+        return freqs
+
+def rotate_half(x):
+    x1, x2 = x.chunk(2, dim=-1)
+    return torch.cat((-x2, x1), dim=-1)
+
+def apply_rotary_pos_emb(pos, t):
+    return (t * pos.cos()) + (rotate_half(t) * pos.sin())
+
 # norms
 
 class RMSNorm(nn.Module):
@@ -70,7 +90,11 @@ class Attention(nn.Module):
         self.to_kv = nn.Linear(dim, dim_inner * 2, bias = False)
         self.to_out = nn.Linear(dim_inner, dim, bias = False)
 
-    def forward(self, x):
+    def forward(
+        self,
+        x,
+        rotary_emb = None
+    ):
         h = self.heads
 
         x = self.norm(x)
@@ -80,12 +104,16 @@ class Attention(nn.Module):
 
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = h), (q, k, v))
 
+        if exists(rotary_emb):
+            q = apply_rotary_pos_emb(rotary_emb, q)
+            k = apply_rotary_pos_emb(rotary_emb, k)
+
         out = self.attend(q, k, v)
 
         out = rearrange(out, 'b h n d -> b n (h d)')
         return self.to_out(out)
 
-# classes
+# transformer
 
 class RecurrentMemoryTransformer(nn.Module):
     def __init__(
@@ -96,19 +124,21 @@ class RecurrentMemoryTransformer(nn.Module):
         depth,
         num_memory_tokens,
         seq_len,
-        causal = True,
-        max_segments = 7,   # in the paper, they went up to 7 segments
+        causal = True,        
         dim_head = 64,
         heads = 8,
         ff_mult = 4,
         use_flash_attn = False
     ):
         super().__init__()
+        self.seq_len = seq_len
+
         assert num_memory_tokens > 0
-        self.max_segments = max_segments
 
         self.token_emb = nn.Embedding(num_tokens, dim)
         self.pos_emb = nn.Embedding(seq_len, dim)
+
+        self.rotary_pos_emb = RotaryEmbedding(dim_head)
 
         self.num_memory_tokens = num_memory_tokens
 
@@ -139,33 +169,68 @@ class RecurrentMemoryTransformer(nn.Module):
         x,
         past_memories = None
     ):
-        b, n, device, m = *x.shape, x.device, self.num_memory_tokens
+        b, n, device, mem_length = *x.shape, x.device, self.num_memory_tokens
+
+        pos = torch.arange(n, device = device)
 
         x = self.token_emb(x)
-        x = x + self.pos_emb(torch.arange(n, device = device))
+        x = x + self.pos_emb(pos)
 
         # concat past memories, if needed
 
         past_length = 0
         if exists(past_memories):
             x = torch.cat((past_memories, x), dim = -2)
-            past_length = m
+            past_length = mem_length
 
         # concat memories into the future, to be passed onto the next segment
 
         future_memories = repeat(self.memory_tokens, 'm d -> b m d', b = b)
         x = torch.cat((x, future_memories), dim = -2)
 
+        # rotary embedding - offset main positions by 10000, and keep all memories at position 0
+
+        pos += 10000
+        pos = F.pad(pos, (past_length, mem_length), value = 0)
+
+        rotary_emb = self.rotary_pos_emb(pos)
+
         # attention and feedforward
 
         for attn, ff in self.layers:
-            x = attn(x) + x
+            x = attn(x, rotary_emb = rotary_emb) + x
             x = ff(x) + x
 
         # split out memories
 
-        past_memories, x, memories = x[:, :past_length], x[:, past_length:-m], x[:, -m:]
+        past_memories, x, memories = x[:, :past_length], x[:, past_length:-mem_length], x[:, -mem_length:]
 
         # to logits
 
         return self.to_logits(x), memories
+
+# wrapper to manage many segments
+
+class RecurrentMemoryTransformerWrapper(nn.Module):
+    def __init__(
+        self,
+        transformer: RecurrentMemoryTransformer
+    ):
+        super().__init__()
+        self.transformer = transformer
+        self.seq_len = transformer.seq_len
+
+    def forward(
+        self,
+        x,
+        memories = None
+    ):
+        segments = x.split(self.seq_len, dim = -1)
+
+        all_logits = []
+
+        for segment in segments:
+            logits, memories = self.transformer(segment, memories)
+            all_logits.append(logits)
+
+        return torch.cat(all_logits, dim = -2), memories
