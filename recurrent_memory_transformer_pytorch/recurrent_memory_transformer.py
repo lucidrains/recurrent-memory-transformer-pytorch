@@ -190,7 +190,7 @@ class RecurrentMemoryTransformer(nn.Module):
 
         # rotary embedding - offset main positions by 10000, and keep all memories at position 0
 
-        pos += 10000
+        pos = pos + 10000
         pos = F.pad(pos, (past_length, mem_length), value = 0)
 
         rotary_emb = self.rotary_pos_emb(pos)
@@ -223,8 +223,12 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
     def forward(
         self,
         x,
-        memories = None
+        memories = None,
+        return_loss = False
     ):
+        if return_loss:
+            x, labels = x[:, :-1], x[:, 1:]
+
         segments = x.split(self.seq_len, dim = -1)
 
         all_logits = []
@@ -233,4 +237,10 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
             logits, memories = self.transformer(segment, memories)
             all_logits.append(logits)
 
-        return torch.cat(all_logits, dim = -2), memories
+        all_logits = torch.cat(all_logits, dim = -2)
+
+        if return_loss:
+            all_logits = rearrange(all_logits, 'b n c -> b c n')
+            return F.cross_entropy(all_logits, labels)
+
+        return all_logits, memories
