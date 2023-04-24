@@ -272,13 +272,22 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
     ):
         assert self.transformer.causal, 'only autoregressive transformers can generate'
 
-        start_len = prime.shape[-1]
+        start_len, seq_len = prime.shape[-1], self.seq_len
 
-        output = prime
+        assert length >= start_len
+
+        *past_segments, curr_segment = prime.split(seq_len, dim = -1)
+
+        # catch memories up to the current segment
+
+        for past_segment in past_segments:
+            _, memories = self.forward(past_segment, memories)
+
+        # sample for the remaining length
 
         for ind in range(length - start_len):
 
-            logits, next_memories = self.forward(output, memories)
+            logits, next_memories = self.forward(curr_segment, memories)
 
             logits = logits[:, -1]
 
@@ -286,10 +295,20 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
             sampled = gumbel_sample(filtered_logits, temperature = temperature)
             sampled = rearrange(sampled, 'b -> b 1')
 
-            output = torch.cat((output, sampled), dim = -1)
+            curr_segment = torch.cat((curr_segment, sampled), dim = -1)
 
-            if divisible_by(output.shape[-1] - 1, self.seq_len):
+            if divisible_by(curr_segment.shape[-1] - 1, seq_len):
                 memories = next_memories
+                past_segment, curr_segment = curr_segment[..., :seq_len], curr_segment[..., -1:]
+                past_segments.append(past_segment)
+
+        # add current segment to all segments
+
+        past_segments.append(curr_segment)
+
+        # reconcat all segments
+
+        output = torch.cat(past_segments, dim = -1)
 
         output = output[:, start_len:]
         return output
