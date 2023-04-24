@@ -27,7 +27,8 @@ model = RecurrentMemoryTransformer(
     depth = 6,                        # transformer depth
     dim_head = 64,                    # dimension per head
     heads = 8,                        # heads
-    seq_len = 4096                    # sequence length of a segment
+    seq_len = 1024,                   # sequence length of a segment
+    use_flash_attn = True             # whether to use flash attention
 )
 
 x = torch.randint(0, 256, (1, 1024))

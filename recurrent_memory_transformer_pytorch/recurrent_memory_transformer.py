@@ -54,14 +54,15 @@ class Attention(nn.Module):
         causal = False,
         dim_head = 64,
         heads = 8,
-        dropout = 0.
+        dropout = 0.,
+        use_flash_attn = False
     ):
         super().__init__()
         dim_inner = dim_head * heads
         self.scale = dim_head ** -0.5
         self.heads = heads
 
-        self.attend = Attend(causal = causal, dropout = dropout)
+        self.attend = Attend(causal = causal, dropout = dropout, use_flash = use_flash_attn)
 
         self.norm = RMSNorm(dim)
 
@@ -95,12 +96,15 @@ class RecurrentMemoryTransformer(nn.Module):
         depth,
         num_memory_tokens,
         seq_len,
+        max_segments = 7,   # in the paper, they went up to 7 segments
         dim_head = 64,
         heads = 8,
-        ff_mult = 4
+        ff_mult = 4,
+        use_flash_attn = False
     ):
         super().__init__()
         assert num_memory_tokens > 0
+        self.max_segments = max_segments
 
         self.token_emb = nn.Embedding(num_tokens, dim)
         self.pos_emb = nn.Embedding(seq_len, dim)
@@ -112,7 +116,12 @@ class RecurrentMemoryTransformer(nn.Module):
 
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
-                Attention(dim = dim, dim_head = dim_head, heads = heads),
+                Attention(
+                    dim = dim,
+                    dim_head = dim_head,
+                    heads = heads,
+                    use_flash_attn = use_flash_attn
+                ),
                 FeedForward(dim = dim, mult = ff_mult)
             ]))
 
