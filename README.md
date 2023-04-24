@@ -1,6 +1,14 @@
+<img src="./rmt.png" width="450px"></img>
+
 ## Recurrent Memory Transformer - Pytorch (wip)
 
-Implementation of Recurrent Memory Transformer in Pytorch
+Implementation of <a href="https://arxiv.org/abs/2207.06881">Recurrent Memory Transformer</a> in Pytorch.
+
+## Alternatives
+
+- <a href="https://github.com/lucidrains/block-recurrent-transformer-pytorch">Block Recurrent Transformer</a>
+
+- <a href="https://github.com/lucidrains/memformer">Memformer</a>
 
 ## Citations
 
