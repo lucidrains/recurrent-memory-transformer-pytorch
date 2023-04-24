@@ -20,7 +20,7 @@ def default(vals):
 # rotary embedding
 
 class RotaryEmbedding(nn.Module):
-    def __init__(self, dim, theta = 64000):
+    def __init__(self, dim, theta = 32768):
         super().__init__()
         inv_freq = 1. / (theta ** (torch.arange(0, dim, 2).float() / dim))
         self.register_buffer('inv_freq', inv_freq)
@@ -79,7 +79,6 @@ class Attention(nn.Module):
     ):
         super().__init__()
         dim_inner = dim_head * heads
-        self.scale = dim_head ** -0.5
         self.heads = heads
 
         self.attend = Attend(causal = causal, dropout = dropout, use_flash = use_flash_attn)
@@ -128,22 +127,32 @@ class RecurrentMemoryTransformer(nn.Module):
         dim_head = 64,
         heads = 8,
         ff_mult = 4,
-        use_flash_attn = False
+        use_flash_attn = False,
+        sum_past_memories_to_future = False
     ):
         super().__init__()
+        self.causal = causal
         self.seq_len = seq_len
 
         assert num_memory_tokens > 0
 
         self.token_emb = nn.Embedding(num_tokens, dim)
-        self.pos_emb = nn.Embedding(seq_len, dim)
 
+        # positions
+
+        self.pos_emb = nn.Embedding(seq_len, dim)
         self.rotary_pos_emb = RotaryEmbedding(dim_head)
+
+        # memory related
 
         self.num_memory_tokens = num_memory_tokens
 
         self.memory_tokens = nn.Parameter(torch.randn(num_memory_tokens, dim))
         nn.init.normal_(self.memory_tokens, std = 0.02)
+
+        self.sum_past_memories_to_future  = sum_past_memories_to_future
+
+        # layers
 
         self.layers = nn.ModuleList([])
 
@@ -176,16 +185,21 @@ class RecurrentMemoryTransformer(nn.Module):
         x = self.token_emb(x)
         x = x + self.pos_emb(pos)
 
+        # concat memories into the future, to be passed onto the next segment
+
+        future_memories = repeat(self.memory_tokens, 'm d -> b m d', b = b)
+
         # concat past memories, if needed
 
         past_length = 0
+
         if exists(past_memories):
             x = torch.cat((past_memories, x), dim = -2)
             past_length = mem_length
 
-        # concat memories into the future, to be passed onto the next segment
+            if self.sum_past_memories_to_future:
+                future_memories = future_memories + past_memories
 
-        future_memories = repeat(self.memory_tokens, 'm d -> b m d', b = b)
         x = torch.cat((x, future_memories), dim = -2)
 
         # rotary embedding - offset main positions by 10000, and keep all memories at position 0
@@ -219,6 +233,14 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
         super().__init__()
         self.transformer = transformer
         self.seq_len = transformer.seq_len
+
+    @torch.no_grad()
+    def generate(
+        self,
+        length
+    ):
+        assert self.transformer.causal, 'only autoregressive transformers can generate'
+        raise NotImplementedError
 
     def forward(
         self,
