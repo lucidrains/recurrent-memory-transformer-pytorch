@@ -77,12 +77,6 @@ class Attend(nn.Module):
     def flash_attn(self, q, k, v, mask = None):
         _, heads, q_len, _, k_len, is_cuda = *q.shape, k.shape[-2], q.is_cuda
 
-        # Recommended for multi-query single-key-value attention by Tri Dao
-        # kv shape torch.Size([1, 512, 64]) -> torch.Size([1, 8, 512, 64])
-
-        k = rearrange(k, 'b ... -> b 1 ...').expand_as(q)
-        v = rearrange(v, 'b ... -> b 1 ...').expand_as(q)
-
         # Check if mask exists and expand to compatible shape
         # The mask is B L, so it would have to be expanded to B H N L
 
@@ -124,7 +118,7 @@ class Attend(nn.Module):
 
         # similarity
 
-        sim = einsum("b h i d, b j d -> b h i j", q, k) * scale
+        sim = einsum("b h i d, b h j d -> b h i j", q, k) * scale
 
         # key padding mask
 
@@ -145,6 +139,6 @@ class Attend(nn.Module):
 
         # aggregate values
 
-        out = einsum("b h i j, b j d -> b h i d", attn, v)
+        out = einsum("b h i j, b h j d -> b h i d", attn, v)
 
         return out

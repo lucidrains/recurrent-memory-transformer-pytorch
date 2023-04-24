@@ -8,6 +8,45 @@ Implementation of <a href="https://arxiv.org/abs/2207.06881">Recurrent Memory Tr
 
 - <a href="https://stability.ai/">Stability</a> and <a href="https://huggingface.co/">🤗 Huggingface</a> for their generous sponsorships to work on and open source cutting edge artificial intelligence research
 
+## Install
+
+```bash
+$ pip install recurrent-memory-transformer-pytorch
+```
+
+## Usage
+
+```python
+import torch
+from recurrent_memory_transformer_pytorch import RecurrentMemoryTransformer
+
+model = RecurrentMemoryTransformer(
+    num_tokens = 256,                 # number of tokens
+    num_memory_tokens = 128,          # number of memory tokens, this will determine the bottleneck for information being passed to the future
+    dim = 512,                        # model dimensions
+    depth = 6,                        # transformer depth
+    dim_head = 64,                    # dimension per head
+    heads = 8,                        # heads
+    seq_len = 4096                    # sequence length of a segment
+)
+
+x = torch.randint(0, 256, (1, 1024))
+
+logits1, mem1 = model(x)        # (1, 1024, 512), (1, 128, 512)
+logits2, mem2 = model(x, mem1)  # (1, 1024, 512), (1, 128, 512)
+logits3, mem3 = model(x, mem2)  # (1, 1024, 512), (1, 128, 512)
+
+# and so on ...
+
+```
+
+## Todo
+
+- [ ] add a wrapper that does simple memory checkpointing for starters
+- [ ] relative positional encoding, with positional encoding for each recurrence step
+- [ ] add an axial attention down the past memories axis as an option
+- [ ] add the memory replay backprop technique from memformer paper
+
 ## Alternatives
 
 - <a href="https://github.com/lucidrains/block-recurrent-transformer-pytorch">Block Recurrent Transformer</a>
