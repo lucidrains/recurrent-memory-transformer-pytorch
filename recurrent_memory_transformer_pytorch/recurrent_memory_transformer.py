@@ -287,6 +287,7 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
         self.seq_len = transformer.seq_len
 
     @torch.no_grad()
+    @eval_decorator
     def generate(
         self,
         prime,
