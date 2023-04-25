@@ -20,7 +20,7 @@ VALIDATE_EVERY = 100
 PRIME_LENGTH = 128
 GENERATE_EVERY = 250
 GENERATE_LENGTH = 2048
-SEQ_LEN = 2048
+SEQ_LEN = 8192
 
 # helpers
 
@@ -44,7 +44,7 @@ model = RecurrentMemoryTransformer(
     depth = 6,
     dim_head = 64,
     heads = 8,
-    seq_len = 256,
+    seq_len = 512,
     use_flash_attn = True,
     num_memory_tokens = 128
 )
@@ -88,11 +88,17 @@ optim = Adam(model.parameters(), lr = LEARNING_RATE)
 for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10.0, desc="training"):
     model.train()
 
+    total_loss = 0.
     for _ in range(GRADIENT_ACCUMULATE_EVERY):
-        loss, _ = model(next(train_loader), return_loss = True)
-        (loss / GRADIENT_ACCUMULATE_EVERY).backward()
+        loss = model(
+            next(train_loader),
+            memory_replay_backprop = True,
+            mrbp_loss_weight = 1. / GRADIENT_ACCUMULATE_EVERY
+        )
 
-    print(f"training loss: {loss.item()}")
+        total_loss += loss
+
+    print(f"training loss: {total_loss.item()}")
     torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
 
     optim.step()

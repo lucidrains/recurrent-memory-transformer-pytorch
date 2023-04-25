@@ -44,9 +44,10 @@ logits3, mem3 = model(x, mem2)  # (1, 1024, 20000), (1, 128, 512)
 
 ## Todo
 
-- [ ] add the memory replay backprop technique from memformer paper
 - [ ] add an axial attention down the past memories axis as an option
 - [ ] for autoregressive, run experiments between future memories being causal masked or not
+
+- [x] add the memory replay backprop technique from memformer paper
 - [x] relative positional encoding
 
 ## Alternatives

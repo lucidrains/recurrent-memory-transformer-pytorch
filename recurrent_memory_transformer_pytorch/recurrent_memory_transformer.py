@@ -1,5 +1,6 @@
 import math
 from itertools import zip_longest
+from contextlib import nullcontext
 
 import torch
 import torch.nn.functional as F
@@ -208,6 +209,9 @@ class RecurrentMemoryTransformer(nn.Module):
 
         self.ignore_index = ignore_index
 
+    def init_memory(self, batch):
+        return repeat(self.memory_tokens, 'm d -> b m d', b = batch)
+
     def forward(
         self,
         x,
@@ -225,10 +229,9 @@ class RecurrentMemoryTransformer(nn.Module):
 
         # prepare read and write memories, as in paper
 
-        write_memories = repeat(self.memory_tokens, 'm d -> b m d', b = b)
+        write_memories = self.init_memory(b)
 
-        read_memories = default(read_memories, x[:, 0:0])
-        read_length = read_memories.shape[-2]
+        read_memories = default(read_memories, write_memories)
 
         # concat to main sequence using einop's pack
 
@@ -237,12 +240,12 @@ class RecurrentMemoryTransformer(nn.Module):
         # take care of mask
 
         if exists(mask):
-            mask = F.pad(mask, (read_length, mem_length), value = True)
+            mask = F.pad(mask, (mem_length, mem_length), value = True)
 
         # rotary embedding - offset main positions by 10000, and keep all memories at position 0
 
         pos = pos + 10000
-        pos = F.pad(pos, (read_length, mem_length), value = 0)
+        pos = F.pad(pos, (mem_length, mem_length), value = 0)
 
         rotary_emb = self.rotary_pos_emb(pos)
 
@@ -340,12 +343,14 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
         memories = None,
         *,
         mask = None,
-        return_loss = False
+        return_loss = False,
+        memory_replay_backprop = False,  # whether to have the class do the backwards pass memory efficiently
+        mrbp_loss_weight = 1.            # if using memory replay backprop with gradient accumulation, multiply by this before backwards
     ):
         seq_len = self.seq_len
 
         labels = None
-        if return_loss:
+        if return_loss or memory_replay_backprop:
             x, labels = x[:, :-1], x[:, 1:]
 
         # segment input
@@ -369,18 +374,74 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
         if exists(mask):
             mask_segments = mask.split(seq_len, dim = -1)
 
+        # init memories if not passed in
+
+        if not exists(memories):
+            memories = self.transformer.init_memory(x.shape[0])
+
+        replay_buffer = [memories]
+
+        # decide context of forward depending on whether doing memory-replay-backprop
+
+        forward_context = nullcontext if not memory_replay_backprop else torch.no_grad
+
         # forward and get all outputs (can be either loss or logits)
 
         logits = []
         losses = []
 
         for segment, mask_segment, label_segment, loss_weight in zip_longest(segments, mask_segments, label_segments, segment_length_frac):
-            output, memories = self.transformer(segment, memories, mask = mask_segment, labels = label_segment)
+
+            with forward_context():
+                output, memories = self.transformer(segment, memories, mask = mask_segment, labels = label_segment)
+
+            replay_buffer.append(memories)
 
             if return_loss:
                 losses.append(output * loss_weight)
             else:
                 logits.append(output)
+
+        # whether to do memory replay backpropagation
+
+        # https://arxiv.org/abs/2010.06891
+        # algorithm 1
+
+        if memory_replay_backprop:
+            memories_grad = torch.zeros_like(replay_buffer[0])
+
+            reversed_inputs = zip_longest(*map(reversed, [
+                range(num_segments),
+                segments,
+                replay_buffer[:-1],
+                mask_segments,
+                label_segments,
+                segment_length_frac,
+            ]))
+
+            total_loss = 0.
+
+            for i, segment, segment_memories, mask_segment, label_segment, loss_weight in reversed_inputs:
+                is_first = i == 0
+
+                segment_memories.requires_grad_()
+
+                loss, next_segment_memories = self.transformer(segment, segment_memories, mask = mask_segment, labels = label_segment)
+
+                weighted_loss = loss * loss_weight * mrbp_loss_weight
+
+                weighted_loss.backward(retain_graph = True)
+
+                next_segment_memories.backward(memories_grad, retain_graph = False)
+
+                total_loss += weighted_loss
+
+                if is_first:
+                    continue
+
+                memories_grad.copy_(segment_memories.grad.data)
+
+            return total_loss
 
         # return logits if needed
 
