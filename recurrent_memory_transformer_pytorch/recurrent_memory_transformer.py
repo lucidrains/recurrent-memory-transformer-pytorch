@@ -345,7 +345,7 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
         mask = None,
         return_loss = False,
         memory_replay_backprop = False,  # whether to have the class do the backwards pass memory efficiently
-        mrbp_loss_weight = 1.            # if using memory replay backprop with gradient accumulation, multiply by this before backwards
+        mrbp_loss_weight = 1.            # if using memory replay backprop with gradient accumulation, scale loss by this factor ex. (1. / <num grad accum steps>)
     ):
         seq_len = self.seq_len
 
@@ -432,7 +432,7 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
 
                 weighted_loss.backward(retain_graph = True)
 
-                next_segment_memories.backward(memories_grad, retain_graph = False)
+                next_segment_memories.backward(memories_grad)
 
                 total_loss += weighted_loss
 
