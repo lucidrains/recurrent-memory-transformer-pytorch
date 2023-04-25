@@ -1,4 +1,5 @@
 import math
+from itertools import zip_longest
 
 import torch
 import torch.nn.functional as F
@@ -354,25 +355,25 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
         num_segments = len(segments)
         segment_length_frac = tuple(map(lambda t: t.shape[-1] / total_length, segments))
 
+        # default values
+
+        label_segments = mask_segments = (None,)
+
         # take care of labels
 
         if exists(labels):
             label_segments = labels.split(seq_len, dim = -1)
-        else:
-            label_segments = (None,) * num_segments
 
         # take care of the mask
 
         if exists(mask):
             mask_segments = mask.split(seq_len, dim = -1)
-        else:
-            mask_segments = (None,) * num_segments
 
         # forward and get all outputs (can be either loss or logits)
 
         outputs = []
 
-        for segment, mask_segment, label_segment in zip(segments, mask_segments, label_segments):
+        for segment, mask_segment, label_segment in zip_longest(segments, mask_segments, label_segments):
             output, memories = self.transformer(segment, memories, mask = mask_segment, labels = label_segment)
             outputs.append(output)
 
