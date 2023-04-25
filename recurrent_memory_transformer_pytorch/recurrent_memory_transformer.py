@@ -231,7 +231,8 @@ class RecurrentMemoryTransformer(nn.Module):
 
         write_memories = self.init_memory(b)
 
-        read_memories = default(read_memories, write_memories)
+        read_memories = default(read_memories, x[:, 0:0])
+        read_mem_length = read_memories.shape[-2]
 
         # concat to main sequence using einop's pack
 
@@ -240,12 +241,12 @@ class RecurrentMemoryTransformer(nn.Module):
         # take care of mask
 
         if exists(mask):
-            mask = F.pad(mask, (mem_length, mem_length), value = True)
+            mask = F.pad(mask, (read_mem_length, mem_length), value = True)
 
         # rotary embedding - offset main positions by 10000, and keep all memories at position 0
 
         pos = pos + 10000
-        pos = F.pad(pos, (mem_length, mem_length), value = 0)
+        pos = F.pad(pos, (read_mem_length, mem_length), value = 0)
 
         rotary_emb = self.rotary_pos_emb(pos)
 
@@ -375,10 +376,7 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
         if exists(mask):
             mask_segments = mask.split(seq_len, dim = -1)
 
-        # init memories if not passed in
-
-        if not exists(memories):
-            memories = self.transformer.init_memory(x.shape[0])
+        # keep replay buffer
 
         replay_buffer = [memories]
 
@@ -409,7 +407,7 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
         # algorithm 1
 
         if memory_replay_backprop:
-            memories_grad = torch.zeros_like(replay_buffer[0])
+            memories_grad = torch.zeros_like(replay_buffer[-1])
 
             reversed_inputs = zip_longest(*map(reversed, [
                 range(num_segments),
@@ -425,7 +423,8 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
             for i, segment, segment_memories, mask_segment, label_segment, loss_weight in reversed_inputs:
                 is_first = i == 0
 
-                segment_memories.requires_grad_()
+                if exists(segment_memories):
+                    segment_memories.requires_grad_()
 
                 loss, next_segment_memories = self.transformer(segment, segment_memories, mask = mask_segment, labels = label_segment)
 
