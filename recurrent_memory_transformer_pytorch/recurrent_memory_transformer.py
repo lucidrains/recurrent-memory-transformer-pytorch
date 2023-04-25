@@ -344,13 +344,14 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
         *,
         mask = None,
         return_loss = False,
+        labels = None,
         memory_replay_backprop = False,  # whether to have the class do the backwards pass memory efficiently
         mrbp_loss_weight = 1.            # if using memory replay backprop with gradient accumulation, scale loss by this factor ex. (1. / <num grad accum steps>)
     ):
         seq_len = self.seq_len
 
         labels = None
-        if return_loss or memory_replay_backprop:
+        if (return_loss or memory_replay_backprop) and not exists(labels):
             x, labels = x[:, :-1], x[:, 1:]
 
         # segment input
