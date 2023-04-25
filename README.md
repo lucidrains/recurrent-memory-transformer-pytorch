@@ -47,6 +47,7 @@ logits3, mem3 = model(x, mem2)  # (1, 1024, 20000), (1, 128, 512)
 - [ ] add an axial attention down the past memories axis as an option
 - [ ] for autoregressive, run experiments between future memories being causal masked or not
 - [ ] add sliding windows as an option, detached or with memory propagated using MRBP
+- [ ] offer a way to turn off rotary embeddings, absolute positional embeddings, and add token shift
 
 - [x] add the memory replay backprop technique from memformer paper
 - [x] relative positional encoding
