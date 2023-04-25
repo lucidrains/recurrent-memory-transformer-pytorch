@@ -110,13 +110,18 @@ class Attention(nn.Module):
         dim_head = 64,
         heads = 8,
         dropout = 0.,
-        use_flash_attn = False
+        use_flash_attn = False,
+        use_custom_causal_attn_mask = False
     ):
         super().__init__()
         dim_inner = dim_head * heads
         self.heads = heads
 
-        self.attend = Attend(causal = causal, dropout = dropout, use_flash = use_flash_attn)
+        self.attend = Attend(
+            causal = causal and not use_custom_causal_attn_mask,
+            dropout = dropout,
+            use_flash = use_flash_attn
+        )
 
         self.norm = RMSNorm(dim)
 
@@ -164,7 +169,8 @@ class RecurrentMemoryTransformer(nn.Module):
         heads = 8,
         ff_mult = 4,
         use_flash_attn = False,
-        ignore_index = -1
+        ignore_index = -1,
+        memory_not_causal = True # flash attention behaves a bit more optimally if causal mask is not explicitly passed in - but if the memories perform better without a causal mask, it is necessary to have this turned on
     ):
         super().__init__()
         self.causal = causal
@@ -197,7 +203,8 @@ class RecurrentMemoryTransformer(nn.Module):
                     dim_head = dim_head,
                     causal = causal,
                     heads = heads,
-                    use_flash_attn = use_flash_attn
+                    use_flash_attn = use_flash_attn,
+                    use_custom_causal_attn_mask = memory_not_causal
                 ),
                 FeedForward(dim = dim, mult = ff_mult)
             ]))
@@ -208,6 +215,10 @@ class RecurrentMemoryTransformer(nn.Module):
         )
 
         self.ignore_index = ignore_index
+
+        # whether to use custom attention mask if causal and memory should not be causal
+
+        self.use_custom_causal_attn_mask = causal and memory_not_causal
 
     def init_memory(self, batch):
         return repeat(self.memory_tokens, 'm d -> b m d', b = batch)
@@ -242,6 +253,15 @@ class RecurrentMemoryTransformer(nn.Module):
 
         if exists(mask):
             mask = F.pad(mask, (read_mem_length, mem_length), value = True)
+
+        # custom causal mask, if needed
+
+        if self.use_custom_causal_attn_mask:
+            causal_mask = torch.ones((n, n), device = device, dtype = torch.bool).tril()
+            causal_mask = F.pad(causal_mask, (read_mem_length, mem_length) * 2, value = True)
+
+            assert not exists(mask)
+            mask = rearrange(causal_mask, 'i j -> 1 1 i j')
 
         # rotary embedding - offset main positions by 10000, and keep all memories at position 0
 

@@ -80,7 +80,7 @@ class Attend(nn.Module):
         # Check if mask exists and expand to compatible shape
         # The mask is B L, so it would have to be expanded to B H N L
 
-        if exists(mask):
+        if exists(mask) and mask.ndim != 4:
             mask = rearrange(mask, 'b j -> b 1 1 j')
             mask = mask.expand(-1, heads, q_len, -1)
 
