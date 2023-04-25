@@ -371,17 +371,23 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
 
         # forward and get all outputs (can be either loss or logits)
 
-        outputs = []
+        logits = []
+        losses = []
 
-        for segment, mask_segment, label_segment in zip_longest(segments, mask_segments, label_segments):
+        for segment, mask_segment, label_segment, loss_weight in zip_longest(segments, mask_segments, label_segments, segment_length_frac):
             output, memories = self.transformer(segment, memories, mask = mask_segment, labels = label_segment)
-            outputs.append(output)
+
+            if return_loss:
+                losses.append(output * loss_weight)
+            else:
+                logits.append(output)
+
+        # return logits if needed
 
         if not return_loss:
-            outputs = torch.cat(outputs, dim = -2)
-            return outputs, memories
+            logits = torch.cat(logits, dim = -2)
+            return logits, memories
 
-        weighted_loss = [(loss * weight) for loss, weight in zip(outputs, segment_length_frac)]
-        loss = sum(weighted_loss)
+        # otherwise return losses
 
-        return loss, memories
+        return sum(losses), memories
