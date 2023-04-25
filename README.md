@@ -1,6 +1,6 @@
 <img src="./rmt.png" width="450px"></img>
 
-## Recurrent Memory Transformer - Pytorch (wip)
+## Recurrent Memory Transformer - Pytorch
 
 Implementation of <a href="https://arxiv.org/abs/2207.06881">Recurrent Memory Transformer</a> <a href="https://openreview.net/forum?id=Uynr3iPhksa">(openreview)</a> in Pytorch. They had <a href="https://arxiv.org/abs/2304.11062">a short follow up paper</a> recently that demonstrated it was able to copy information across 1 million tokens at the very least.
 
