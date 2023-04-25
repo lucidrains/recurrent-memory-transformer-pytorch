@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn, einsum
 
-from einops import rearrange, repeat
+from einops import rearrange, repeat, pack, unpack
 
 from recurrent_memory_transformer_pytorch.attend import Attend
 
@@ -13,7 +13,7 @@ from recurrent_memory_transformer_pytorch.attend import Attend
 def exists(val):
     return val is not None
 
-def default(vals):
+def default(*vals):
     for val in vals:
         if exists(val):
             return val
@@ -207,7 +207,7 @@ class RecurrentMemoryTransformer(nn.Module):
     def forward(
         self,
         x,
-        past_memories = None,
+        read_memories = None,
         *,
         mask = None,
     ):
@@ -218,28 +218,26 @@ class RecurrentMemoryTransformer(nn.Module):
         x = self.token_emb(x)
         x = x + self.pos_emb(pos)
 
-        # concat memories into the future, to be passed onto the next segment
+        # prepare read and write memories, as in paper
 
-        future_memories = repeat(self.memory_tokens, 'm d -> b m d', b = b)
-        x = torch.cat((x, future_memories), dim = -2)
+        write_memories = repeat(self.memory_tokens, 'm d -> b m d', b = b)
 
-        # concat past memories, if needed
+        read_memories = default(read_memories, x[:, 0:0])
+        read_length = read_memories.shape[-2]
 
-        past_length = 0
+        # concat to main sequence using einop's pack
 
-        if exists(past_memories):
-            x = torch.cat((past_memories, x), dim = -2)
-            past_length = mem_length
+        x, ps = pack([read_memories, x, write_memories], 'b * d')
 
         # take care of mask
 
         if exists(mask):
-            mask = F.pad(mask, (past_length, mem_length), value = True)
+            mask = F.pad(mask, (read_length, mem_length), value = True)
 
         # rotary embedding - offset main positions by 10000, and keep all memories at position 0
 
         pos = pos + 10000
-        pos = F.pad(pos, (past_length, mem_length), value = 0)
+        pos = F.pad(pos, (read_length, mem_length), value = 0)
 
         rotary_emb = self.rotary_pos_emb(pos)
 
@@ -249,13 +247,13 @@ class RecurrentMemoryTransformer(nn.Module):
             x = attn(x, mask = mask, rotary_emb = rotary_emb) + x
             x = ff(x) + x
 
-        # split out memories
+        # split out memories using unpack
 
-        past_memories, x, memories = x[:, :past_length], x[:, past_length:-mem_length], x[:, -mem_length:]
+        read_memories, x, write_memories = unpack(x, ps, 'b * d')
 
         # to logits
 
-        return self.to_logits(x), memories
+        return self.to_logits(x), write_memories
 
 # wrapper to manage many segments
 
@@ -294,7 +292,6 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
         # sample for the remaining length
 
         for ind in range(length - start_len):
-
             logits, next_memories = self.forward(curr_segment, memories)
 
             logits = logits[:, -1]
@@ -324,8 +321,9 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
     def forward(
         self,
         x,
-        mask = None,
         memories = None,
+        *,
+        mask = None,
         return_loss = False
     ):
         if return_loss:
