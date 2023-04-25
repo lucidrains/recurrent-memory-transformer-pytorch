@@ -125,7 +125,8 @@ class Attention(nn.Module):
     def forward(
         self,
         x,
-        rotary_emb = None
+        rotary_emb = None,
+        mask = None
     ):
         h = self.heads
 
@@ -140,7 +141,7 @@ class Attention(nn.Module):
             q = apply_rotary_pos_emb(rotary_emb, q)
             k = apply_rotary_pos_emb(rotary_emb, k)
 
-        out = self.attend(q, k, v)
+        out = self.attend(q, k, v, mask = mask)
 
         out = rearrange(out, 'b h n d -> b n (h d)')
         return self.to_out(out)
@@ -206,7 +207,9 @@ class RecurrentMemoryTransformer(nn.Module):
     def forward(
         self,
         x,
-        past_memories = None
+        past_memories = None,
+        *,
+        mask = None,
     ):
         b, n, device, mem_length = *x.shape, x.device, self.num_memory_tokens
 
@@ -228,6 +231,11 @@ class RecurrentMemoryTransformer(nn.Module):
             x = torch.cat((past_memories, x), dim = -2)
             past_length = mem_length
 
+        # take care of mask
+
+        if exists(mask):
+            mask = F.pad(mask, (past_length, mem_length), value = True)
+
         # rotary embedding - offset main positions by 10000, and keep all memories at position 0
 
         pos = pos + 10000
@@ -238,7 +246,7 @@ class RecurrentMemoryTransformer(nn.Module):
         # attention and feedforward
 
         for attn, ff in self.layers:
-            x = attn(x, rotary_emb = rotary_emb) + x
+            x = attn(x, mask = mask, rotary_emb = rotary_emb) + x
             x = ff(x) + x
 
         # split out memories
@@ -316,6 +324,7 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
     def forward(
         self,
         x,
+        mask = None,
         memories = None,
         return_loss = False
     ):
@@ -324,10 +333,15 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
 
         segments = x.split(self.seq_len, dim = -1)
 
+        if exists(mask):
+            mask_segments = mask.split(self.seq_len, dim = -1)
+        else:
+            mask_segments = (None,) * len(segments)
+
         all_logits = []
 
-        for segment in segments:
-            logits, memories = self.transformer(segment, memories)
+        for segment, mask_segment in zip(segments, mask_segments):
+            logits, memories = self.transformer(segment, memories, mask = mask_segment)
             all_logits.append(logits)
 
         all_logits = torch.cat(all_logits, dim = -2)
