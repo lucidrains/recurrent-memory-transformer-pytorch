@@ -161,7 +161,8 @@ class RecurrentMemoryTransformer(nn.Module):
         dim_head = 64,
         heads = 8,
         ff_mult = 4,
-        use_flash_attn = False
+        use_flash_attn = False,
+        ignore_index = -1
     ):
         super().__init__()
         self.causal = causal
@@ -204,14 +205,17 @@ class RecurrentMemoryTransformer(nn.Module):
             nn.Linear(dim, num_tokens, bias = False)
         )
 
+        self.ignore_index = ignore_index
+
     def forward(
         self,
         x,
         read_memories = None,
         *,
         mask = None,
+        labels = None,
     ):
-        b, n, device, mem_length = *x.shape, x.device, self.num_memory_tokens
+        b, n, device, mem_length, return_loss = *x.shape, x.device, self.num_memory_tokens, exists(labels)
 
         pos = torch.arange(n, device = device)
 
@@ -253,7 +257,18 @@ class RecurrentMemoryTransformer(nn.Module):
 
         # to logits
 
-        return self.to_logits(x), write_memories
+        logits = self.to_logits(x)
+
+        if not return_loss:
+            return logits, write_memories
+
+        loss = F.cross_entropy(
+            rearrange(logits, 'b n c -> b c n'),
+            labels,
+            ignore_index = self.ignore_index
+        )
+
+        return loss, write_memories
 
 # wrapper to manage many segments
 
@@ -326,26 +341,46 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
         mask = None,
         return_loss = False
     ):
+        seq_len = self.seq_len
+
+        labels = None
         if return_loss:
             x, labels = x[:, :-1], x[:, 1:]
 
-        segments = x.split(self.seq_len, dim = -1)
+        # segment input
+
+        segments = x.split(seq_len, dim = -1)
+        total_length = x.shape[-1]
+        num_segments = len(segments)
+        segment_length_frac = tuple(map(lambda t: t.shape[-1] / total_length, segments))
+
+        # take care of labels
+
+        if exists(labels):
+            label_segments = labels.split(seq_len, dim = -1)
+        else:
+            label_segments = (None,) * num_segments
+
+        # take care of the mask
 
         if exists(mask):
-            mask_segments = mask.split(self.seq_len, dim = -1)
+            mask_segments = mask.split(seq_len, dim = -1)
         else:
-            mask_segments = (None,) * len(segments)
+            mask_segments = (None,) * num_segments
 
-        all_logits = []
+        # forward and get all outputs (can be either loss or logits)
 
-        for segment, mask_segment in zip(segments, mask_segments):
-            logits, memories = self.transformer(segment, memories, mask = mask_segment)
-            all_logits.append(logits)
+        outputs = []
 
-        all_logits = torch.cat(all_logits, dim = -2)
+        for segment, mask_segment, label_segment in zip(segments, mask_segments, label_segments):
+            output, memories = self.transformer(segment, memories, mask = mask_segment, labels = label_segment)
+            outputs.append(output)
 
-        if return_loss:
-            all_logits = rearrange(all_logits, 'b n c -> b c n')
-            return F.cross_entropy(all_logits, labels)
+        if not return_loss:
+            outputs = torch.cat(outputs, dim = -2)
+            return outputs, memories
 
-        return all_logits, memories
+        weighted_loss = [(loss * weight) for loss, weight in zip(outputs, segment_length_frac)]
+        loss = sum(weighted_loss)
+
+        return loss, memories

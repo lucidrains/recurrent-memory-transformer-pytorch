@@ -44,9 +44,8 @@ logits3, mem3 = model(x, mem2)  # (1, 1024, 20000), (1, 128, 512)
 
 ## Todo
 
-- [ ] add a wrapper that does simple memory checkpointing for starters
-- [ ] add an axial attention down the past memories axis as an option
 - [ ] add the memory replay backprop technique from memformer paper
+- [ ] add an axial attention down the past memories axis as an option
 - [ ] for autoregressive, run experiments between future memories being causal masked or not
 - [x] relative positional encoding
 
@@ -106,5 +105,14 @@ logits3, mem3 = model(x, mem2)  # (1, 1024, 20000), (1, 128, 512)
     eprint  = {2104.09864},
     archivePrefix = {arXiv},
     primaryClass = {cs.CL}
+}
+```
+
+```bibtex
+@inproceedings{Wu2020MemformerAM,
+    title   = {Memformer: A Memory-Augmented Transformer for Sequence Modeling},
+    author  = {Qingyang Wu and Zhenzhong Lan and Kun Qian and Jing Gu and Alborz Geramifard and Zhou Yu},
+    booktitle = {AACL/IJCNLP},
+    year    = {2020}
 }
 ```
