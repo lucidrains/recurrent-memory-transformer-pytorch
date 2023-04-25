@@ -42,6 +42,33 @@ logits3, mem3 = model(x, mem2)  # (1, 1024, 20000), (1, 128, 512)
 
 ```
 
+Train on an absurdly long sequence
+
+```python
+import torch
+from recurrent_memory_transformer_pytorch import (
+    RecurrentMemoryTransformer,
+    RecurrentMemoryTransformerWrapper
+)
+
+model = RecurrentMemoryTransformer(
+    num_tokens = 256,
+    num_memory_tokens = 128,
+    dim = 512,
+    depth = 6,
+    seq_len = 1024,
+    use_flash_attn = True,
+    causal = True
+)
+
+model = RecurrentMemoryTransformerWrapper(model).cuda()
+
+seq = torch.randint(0, 256, (4, 65536)).cuda()   # absurdly long sequence, in reality, they curriculum learned this starting with 1 segment to about 7-8 segments
+
+loss = model(seq, memory_replay_backprop = True) # memory efficient training from memformer paper
+
+```
+
 ## Todo
 
 - [ ] add an axial attention down the past memories axis as an option
