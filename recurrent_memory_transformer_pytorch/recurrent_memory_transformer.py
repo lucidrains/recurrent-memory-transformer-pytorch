@@ -296,6 +296,8 @@ class RecurrentMemoryTransformer(nn.Module):
     ):
         b, n, device, mem_length, return_loss = *x.shape, x.device, self.num_memory_tokens, exists(labels)
 
+        assert n <= self.seq_len
+
         pos = torch.arange(n, device = device)
 
         x = self.token_emb(x)
