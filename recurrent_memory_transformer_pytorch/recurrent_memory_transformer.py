@@ -11,6 +11,10 @@ from einops import rearrange, repeat, pack, unpack
 
 from recurrent_memory_transformer_pytorch.attend import Attend
 
+# constants
+
+Linear = partial(nn.Linear, bias = False)
+
 # helpers
 
 def exists(val):
@@ -63,6 +67,12 @@ def token_shift_fn(t, ps):
     t = torch.cat((t, t_shift), dim = -1)
     return torch.cat((read_mem, t, write_mem), dim = -2)
 
+def frac_gradient(t, frac = 1.):
+    if frac == 1.:
+        return t
+
+    return t * frac + t.detach() * (1. - frac)
+
 # rotary embedding
 
 class RotaryEmbedding(nn.Module):
@@ -105,9 +115,10 @@ def FeedForward(dim, mult = 4):
     dim_inner = int(dim * mult * 2 / 3)
     return nn.Sequential(
         RMSNorm(dim),
-        nn.Linear(dim, dim_inner * 2),
+        Linear(dim, dim_inner * 2, bias = False),
         GEGLU(),
-        nn.Linear(dim_inner, dim)
+        RMSNorm(dim_inner),
+        Linear(dim_inner, dim, bias = False)
     )
 
 # attention
@@ -136,9 +147,9 @@ class Attention(nn.Module):
 
         self.norm = RMSNorm(dim)
 
-        self.to_q = nn.Linear(dim, dim_inner, bias = False)
-        self.to_kv = nn.Linear(dim, dim_inner * 2, bias = False)
-        self.to_out = nn.Linear(dim_inner, dim, bias = False)
+        self.to_q = Linear(dim, dim_inner)
+        self.to_kv = Linear(dim, dim_inner * 2)
+        self.to_out = Linear(dim_inner, dim)
 
     def forward(
         self,
@@ -184,11 +195,14 @@ class RecurrentMemoryTransformer(nn.Module):
         abs_pos_emb = True,
         rotary_pos_emb = False,
         token_shift = True,
-        memory_not_causal = True # flash attention behaves a bit more optimally if causal mask is not explicitly passed in - but if the memories perform better without a causal mask, it is necessary to have this turned on
+        emb_gradient_frac = 0.1,   # trick from cogview paper that leads to a bit more stability
+        memory_not_causal = True,  # flash attention behaves a bit more optimally if causal mask is not explicitly passed in - but if the memories perform better without a causal mask, it is necessary to have this turned on
     ):
         super().__init__()
         self.causal = causal
         self.seq_len = seq_len
+
+        self.emb_gradient_frac = emb_gradient_frac
 
         assert num_memory_tokens > 0
 
@@ -233,7 +247,7 @@ class RecurrentMemoryTransformer(nn.Module):
 
         self.to_logits = nn.Sequential(
             RMSNorm(dim),
-            nn.Linear(dim, num_tokens, bias = False)
+            nn.Linear(dim, num_tokens)
         )
 
         self.ignore_index = ignore_index
@@ -263,6 +277,10 @@ class RecurrentMemoryTransformer(nn.Module):
 
         if exists(self.pos_emb):
             x = x + self.pos_emb(pos)
+
+        # trick from cogview paper
+
+        x = frac_gradient(x, self.emb_gradient_frac)
 
         # prepare read and write memories, as in paper
 
