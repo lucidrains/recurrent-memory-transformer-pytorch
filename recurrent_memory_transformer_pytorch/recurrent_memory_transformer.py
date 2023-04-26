@@ -288,7 +288,9 @@ class RecurrentMemoryTransformer(nn.Module):
 
         if self.use_custom_causal_attn_mask:
             causal_mask = torch.ones((n, n), device = device, dtype = torch.bool).tril()
-            causal_mask = F.pad(causal_mask, (read_mem_length, mem_length) * 2, value = True)
+
+            causal_mask = F.pad(causal_mask, (0, mem_length, read_mem_length, 0), value = False)
+            causal_mask = F.pad(causal_mask, (read_mem_length, 0, 0, mem_length), value = True)
 
             assert not exists(mask)
             mask = rearrange(causal_mask, 'i j -> 1 1 i j')
