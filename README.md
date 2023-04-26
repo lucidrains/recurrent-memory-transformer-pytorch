@@ -42,6 +42,35 @@ logits3, mem3, _ = model(x, mem2)  # (1, 1024, 20000), (1, 128, 512), None
 
 ```
 
+With XL memories
+
+```python
+import torch
+from recurrent_memory_transformer_pytorch import RecurrentMemoryTransformer
+
+model = RecurrentMemoryTransformer(
+    num_tokens = 20000,
+    num_memory_tokens = 128,
+    dim = 512,
+    depth = 6,
+    causal = True,
+    dim_head = 64,
+    heads = 8,
+    seq_len = 1024,
+    use_flash_attn = True,
+    use_xl_memories = True,    # set this to True
+    xl_mem_len = 512           # can be shorter than the seq len - i think just having a bit of the past will prevent much of the RMT memories  memorizing the immediate preceding text
+)
+
+x = torch.randint(0, 256, (1, 1024))
+
+logits1, mem1, xl_mem1 = model(x)                               # (1, 1024, 20000), (1, 128, 512), [(2, 1, 512, 512)]
+logits2, mem2, xl_mem2 = model(x, mem1, xl_memories = xl_mem1)  # (1, 1024, 20000), (1, 128, 512), [(2, 1, 512, 512)]
+logits3, mem3, xl_mem3 = model(x, mem2, xl_memories = xl_mem2)  # (1, 1024, 20000), (1, 128, 512), [(2, 1, 512, 512)]
+
+# and so on ...
+```
+
 Train on an absurdly long sequence
 
 ```python
