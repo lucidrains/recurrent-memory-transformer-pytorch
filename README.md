@@ -169,3 +169,15 @@ loss = model(seq, memory_replay_backprop = True) # memory efficient training fro
     primaryClass = {cs.CV}
 }
 ```
+
+```bibtex
+@software{Dayma_DALLE_Mini_2021,
+    author  = {Dayma, Boris and Patil, Suraj and Cuenca, Pedro and Saifullah, Khalid and Abraham, Tanishq and Lê Khắc, Phúc and Melas, Luke and Ghosh, Ritobrata},
+    doi     = {10.5281/zenodo.5146400},
+    license = {Apache-2.0},
+    month   = {jul},
+    title   = {{DALL·E Mini}},
+    url     = {https://github.com/borisdayma/dalle-mini},
+    version = {v0.1-alpha},
+    year    = {2021}}
+```
