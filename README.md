@@ -193,3 +193,14 @@ loss = model(seq, memory_replay_backprop = True) # memory efficient training fro
     note    = {under review}
 }
 ```
+
+```bibtex
+@misc{ding2021erniedoc,
+    title   = {ERNIE-Doc: A Retrospective Long-Document Modeling Transformer},
+    author  = {Siyu Ding and Junyuan Shang and Shuohuan Wang and Yu Sun and Hao Tian and Hua Wu and Haifeng Wang},
+    year    = {2021},
+    eprint  = {2012.15688},
+    archivePrefix = {arXiv},
+    primaryClass = {cs.CL}
+}
+```

@@ -209,8 +209,9 @@ class RecurrentMemoryTransformer(nn.Module):
         token_shift = True,
         use_xl_memories = False,
         xl_mem_len = None,
-        emb_gradient_frac = 0.1,   # trick from cogview paper that leads to a bit more stability
-        memory_not_causal = True,  # flash attention behaves a bit more optimally if causal mask is not explicitly passed in - but if the memories perform better without a causal mask, it is necessary to have this turned on
+        enhanced_xl_recurrence = False,     # add simple method for enhancing receptive field of xl memories, from ernie-doc paper
+        emb_gradient_frac = 0.1,            # trick from cogview paper that leads to a bit more stability
+        memory_not_causal = True,           # flash attention behaves a bit more optimally if causal mask is not explicitly passed in - but if the memories perform better without a causal mask, it is necessary to have this turned on
     ):
         super().__init__()
         self.causal = causal
@@ -250,6 +251,8 @@ class RecurrentMemoryTransformer(nn.Module):
 
         self.use_xl_memories = use_xl_memories
         assert not (rotary_pos_emb and use_xl_memories), 'rotary not compatible with xl memories yet'
+
+        self.enhanced_xl_recurrence = enhanced_xl_recurrence
 
         # layers
 
@@ -351,8 +354,12 @@ class RecurrentMemoryTransformer(nn.Module):
 
         # prepare xl memories
 
-        xl_memories_iter = iter(default(xl_memories, []))
+        xl_memories = default(xl_memories, [])
+        xl_memories_iter = iter(xl_memories)
         new_xl_memories = []
+
+        if self.enhanced_xl_recurrence and len(xl_memories) > 1:  # simply shift all the xl memories down by one, so lower layer gets access to representations from layer above
+            xl_memories = [*xl_memories[1:], xl_memories[0]]
 
         # attention and feedforward
 
