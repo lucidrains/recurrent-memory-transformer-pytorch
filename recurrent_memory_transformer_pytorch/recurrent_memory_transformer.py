@@ -2,6 +2,7 @@ import math
 from functools import partial
 from itertools import zip_longest
 from contextlib import nullcontext
+from typing import Optional, List
 
 import torch
 import torch.nn.functional as F
@@ -155,7 +156,8 @@ class Attention(nn.Module):
         self,
         x,
         rotary_emb = None,
-        mask = None
+        mask = None,
+        xl_memories = None
     ):
         h = self.heads
 
@@ -166,6 +168,15 @@ class Attention(nn.Module):
 
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = h), (q, k, v))
 
+        next_xl_memories = torch.stack((k, v))
+
+        if exists(xl_memories):
+            kx, vx = xl_memories
+            k = torch.cat((kx, k), dim = -2)
+            v = torch.cat((vx, v), dim = -2)
+
+            mask = F.pad(mask, (xl_memories.shape[-2], 0), value = True)
+
         if exists(rotary_emb):
             q = apply_rotary_pos_emb(rotary_emb, q)
             k = apply_rotary_pos_emb(rotary_emb, k)
@@ -173,7 +184,8 @@ class Attention(nn.Module):
         out = self.attend(q, k, v, mask = mask)
 
         out = rearrange(out, 'b h n d -> b n (h d)')
-        return self.to_out(out)
+
+        return self.to_out(out), next_xl_memories
 
 # transformer
 
@@ -195,6 +207,8 @@ class RecurrentMemoryTransformer(nn.Module):
         abs_pos_emb = True,
         rotary_pos_emb = False,
         token_shift = True,
+        use_xl_memories = False,
+        xl_mem_len = None,
         emb_gradient_frac = 0.1,   # trick from cogview paper that leads to a bit more stability
         memory_not_causal = True,  # flash attention behaves a bit more optimally if causal mask is not explicitly passed in - but if the memories perform better without a causal mask, it is necessary to have this turned on
     ):
@@ -227,6 +241,15 @@ class RecurrentMemoryTransformer(nn.Module):
 
         self.memory_tokens = nn.Parameter(torch.randn(num_memory_tokens, dim))
         nn.init.normal_(self.memory_tokens, std = 0.02)
+
+        # xl memories
+
+        xl_mem_len = default(xl_mem_len, seq_len)
+        assert xl_mem_len <= seq_len
+        self.xl_mem_len = xl_mem_len
+
+        self.use_xl_memories = use_xl_memories
+        assert not (rotary_pos_emb and use_xl_memories), 'rotary not compatible with xl memories yet'
 
         # layers
 
@@ -266,6 +289,7 @@ class RecurrentMemoryTransformer(nn.Module):
         *,
         mask = None,
         labels = None,
+        xl_memories: Optional[List[torch.Tensor]] = None
     ):
         b, n, device, mem_length, return_loss = *x.shape, x.device, self.num_memory_tokens, exists(labels)
 
@@ -325,11 +349,27 @@ class RecurrentMemoryTransformer(nn.Module):
 
         shift_fn = partial(self.maybe_token_shift, ps = ps)
 
+        # prepare xl memories
+
+        xl_memories_iter = iter(default(xl_memories, []))
+        new_xl_memories = []
+
         # attention and feedforward
 
         for attn, ff in self.layers:
-            x = attn(shift_fn(x), mask = mask, rotary_emb = rotary_emb) + x
+            attn_out, xl_memories = attn(shift_fn(x), mask = mask, xl_memories = next(xl_memories_iter, None), rotary_emb = rotary_emb)
+            new_xl_memories.append(xl_memories)
+
+            x = x + attn_out
+
             x = ff(shift_fn(x)) + x
+
+        # whether to return xl memories
+
+        next_xl_memories = None
+
+        if self.use_xl_memories:
+            next_xl_memories = list(map(lambda t: torch.detach(t[..., -self.xl_mem_len:, :]), new_xl_memories))
 
         # split out memories using unpack
 
@@ -340,7 +380,7 @@ class RecurrentMemoryTransformer(nn.Module):
         logits = self.to_logits(x)
 
         if not return_loss:
-            return logits, write_memories
+            return logits, write_memories, next_xl_memories
 
         loss = F.cross_entropy(
             rearrange(logits, 'b n c -> b c n'),
@@ -348,7 +388,7 @@ class RecurrentMemoryTransformer(nn.Module):
             ignore_index = self.ignore_index
         )
 
-        return loss, write_memories
+        return loss, write_memories, next_xl_memories
 
 # wrapper to manage many segments
 
@@ -369,6 +409,7 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
         *,
         length,
         memories = None,
+        xl_memories: Optional[List[torch.Tensor]] = None,
         temperature = 1.,
         filter_thres = 0.9,
     ):
@@ -383,12 +424,12 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
         # catch memories up to the current segment
 
         for past_segment in past_segments:
-            _, memories = self.forward(past_segment, memories)
+            _, memories, xl_memories = self.transformer(past_segment, memories, xl_memories = xl_memories)
 
         # sample for the remaining length
 
         for ind in range(length - start_len):
-            logits, next_memories = self.forward(curr_segment, memories)
+            logits, next_memories, next_xl_memories = self.transformer(curr_segment, memories, xl_memories = xl_memories)
 
             logits = logits[:, -1]
 
@@ -400,6 +441,8 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
 
             if divisible_by(curr_segment.shape[-1] - 1, seq_len):
                 memories = next_memories
+                xl_memories = next_xl_memories
+
                 past_segment, curr_segment = curr_segment[..., :seq_len], curr_segment[..., -1:]
                 past_segments.append(past_segment)
 
@@ -420,6 +463,7 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
         memories = None,
         *,
         mask = None,
+        xl_memories: Optional[List[torch.Tensor]] = None,
         return_loss = False,
         labels = None,
         memory_replay_backprop = False,  # whether to have the class do the backwards pass memory efficiently
@@ -456,6 +500,10 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
 
         replay_buffer = [memories]
 
+        # replay buffer for xl memories
+
+        xl_segments = [xl_memories]
+
         # decide context of forward depending on whether doing memory-replay-backprop
 
         forward_context = nullcontext if not memory_replay_backprop else torch.no_grad
@@ -468,9 +516,11 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
         for segment, mask_segment, label_segment, loss_weight in zip_longest(segments, mask_segments, label_segments, segment_length_frac):
 
             with forward_context():
-                output, memories = self.transformer(segment, memories, mask = mask_segment, labels = label_segment)
+                output, memories, xl_memories = self.transformer(segment, memories, mask = mask_segment, labels = label_segment)
 
             replay_buffer.append(memories)
+
+            xl_segments.append(xl_memories)
 
             if return_loss:
                 losses.append(output * loss_weight)
@@ -489,6 +539,7 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
                 range(num_segments),
                 segments,
                 replay_buffer[:-1],
+                xl_segments[:-1],
                 mask_segments,
                 label_segments,
                 segment_length_frac,
@@ -496,13 +547,13 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
 
             total_loss = 0.
 
-            for i, segment, segment_memories, mask_segment, label_segment, loss_weight in reversed_inputs:
+            for i, segment, segment_memories, segment_xl_memories, mask_segment, label_segment, loss_weight in reversed_inputs:
                 is_first = i == 0
 
                 if exists(segment_memories):
                     segment_memories.requires_grad_()
 
-                loss, next_segment_memories = self.transformer(segment, segment_memories, mask = mask_segment, labels = label_segment)
+                loss, next_segment_memories, _ = self.transformer(segment, segment_memories, mask = mask_segment, xl_memories = segment_xl_memories, labels = label_segment)
 
                 weighted_loss = loss * loss_weight * mrbp_loss_weight
 

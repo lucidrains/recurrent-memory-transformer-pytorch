@@ -34,9 +34,9 @@ model = RecurrentMemoryTransformer(
 
 x = torch.randint(0, 256, (1, 1024))
 
-logits1, mem1 = model(x)        # (1, 1024, 20000), (1, 128, 512)
-logits2, mem2 = model(x, mem1)  # (1, 1024, 20000), (1, 128, 512)
-logits3, mem3 = model(x, mem2)  # (1, 1024, 20000), (1, 128, 512)
+logits1, mem1, _ = model(x)        # (1, 1024, 20000), (1, 128, 512), None
+logits2, mem2, _ = model(x, mem1)  # (1, 1024, 20000), (1, 128, 512), None
+logits3, mem3, _ = model(x, mem2)  # (1, 1024, 20000), (1, 128, 512), None
 
 # and so on ...
 
@@ -71,8 +71,9 @@ loss = model(seq, memory_replay_backprop = True) # memory efficient training fro
 
 ## Todo
 
-- [ ] add sliding windows as an option, detached or with memory propagated using MRBP
+- [ ] get rotary embeddings working properly with xl memories
 
+- [x] add xl memories, detached
 - [x] offer a way to turn off rotary embeddings, absolute positional embeddings, and add token shift
 - [x] make memories being causally masked an option
 - [x] add the memory replay backprop technique from memformer paper
