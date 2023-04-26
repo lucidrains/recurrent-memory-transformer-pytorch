@@ -1,4 +1,5 @@
 import math
+from functools import partial
 from itertools import zip_longest
 from contextlib import nullcontext
 
@@ -14,6 +15,9 @@ from recurrent_memory_transformer_pytorch.attend import Attend
 
 def exists(val):
     return val is not None
+
+def identity(t, *args, **kwargs):
+    return t
 
 def default(*vals):
     for val in vals:
@@ -51,6 +55,13 @@ def top_k(logits, thres = 0.9):
     probs = torch.full_like(logits, float('-inf'))
     probs.scatter_(1, ind, val)
     return probs
+
+def token_shift_fn(t, ps):
+    read_mem, t, write_mem = unpack(t, ps, 'b * d')
+    t, t_shift = t.chunk(2, dim = -1)
+    t_shift = F.pad(t_shift, (0, 0, 1, -1), value = 0.)
+    t = torch.cat((t, t_shift), dim = -1)
+    return torch.cat((read_mem, t, write_mem), dim = -2)
 
 # rotary embedding
 
@@ -170,6 +181,9 @@ class RecurrentMemoryTransformer(nn.Module):
         ff_mult = 4,
         use_flash_attn = False,
         ignore_index = -1,
+        abs_pos_emb = True,
+        rotary_pos_emb = False,
+        token_shift = True,
         memory_not_causal = True # flash attention behaves a bit more optimally if causal mask is not explicitly passed in - but if the memories perform better without a causal mask, it is necessary to have this turned on
     ):
         super().__init__()
@@ -182,8 +196,13 @@ class RecurrentMemoryTransformer(nn.Module):
 
         # positions
 
-        self.pos_emb = nn.Embedding(seq_len, dim)
-        self.rotary_pos_emb = RotaryEmbedding(dim_head)
+        assert any([abs_pos_emb, rotary_pos_emb, token_shift])
+
+        self.pos_emb = nn.Embedding(seq_len, dim) if abs_pos_emb else None
+
+        self.rotary_pos_emb = RotaryEmbedding(dim_head) if rotary_pos_emb else None
+
+        self.maybe_token_shift = token_shift_fn if token_shift else identity
 
         # memory related
 
@@ -236,7 +255,11 @@ class RecurrentMemoryTransformer(nn.Module):
         pos = torch.arange(n, device = device)
 
         x = self.token_emb(x)
-        x = x + self.pos_emb(pos)
+
+        # maybe absolute positional embedding
+
+        if exists(self.pos_emb):
+            x = x + self.pos_emb(pos)
 
         # prepare read and write memories, as in paper
 
@@ -265,16 +288,21 @@ class RecurrentMemoryTransformer(nn.Module):
 
         # rotary embedding - offset main positions by 10000, and keep all memories at position 0
 
-        pos = pos + 10000
-        pos = F.pad(pos, (read_mem_length, mem_length), value = 0)
+        rotary_emb = None
 
-        rotary_emb = self.rotary_pos_emb(pos)
+        if exists(self.rotary_pos_emb):
+            pos = pos + 10000
+            pos = F.pad(pos, (read_mem_length, mem_length), value = 0)
+
+            rotary_emb = self.rotary_pos_emb(pos)
+
+        shift_fn = partial(self.maybe_token_shift, ps = ps)
 
         # attention and feedforward
 
         for attn, ff in self.layers:
-            x = attn(x, mask = mask, rotary_emb = rotary_emb) + x
-            x = ff(x) + x
+            x = attn(shift_fn(x), mask = mask, rotary_emb = rotary_emb) + x
+            x = ff(shift_fn(x)) + x
 
         # split out memories using unpack
 

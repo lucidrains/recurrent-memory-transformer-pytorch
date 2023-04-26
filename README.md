@@ -71,10 +71,9 @@ loss = model(seq, memory_replay_backprop = True) # memory efficient training fro
 
 ## Todo
 
-- [ ] add an axial attention down the past memories axis as an option
 - [ ] add sliding windows as an option, detached or with memory propagated using MRBP
-- [ ] offer a way to turn off rotary embeddings, absolute positional embeddings, and add token shift
 
+- [x] offer a way to turn off rotary embeddings, absolute positional embeddings, and add token shift
 - [x] make memories being causally masked an option
 - [x] add the memory replay backprop technique from memformer paper
 - [x] relative positional encoding
