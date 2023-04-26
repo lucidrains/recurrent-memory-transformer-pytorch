@@ -208,6 +208,9 @@ class RecurrentMemoryTransformer(nn.Module):
 
         self.num_memory_tokens = num_memory_tokens
 
+        self.read_memory_emb = nn.Parameter(torch.zeros(dim))
+        nn.init.normal_(self.read_memory_emb, std = 0.02)
+
         self.memory_tokens = nn.Parameter(torch.randn(num_memory_tokens, dim))
         nn.init.normal_(self.memory_tokens, std = 0.02)
 
@@ -265,8 +268,12 @@ class RecurrentMemoryTransformer(nn.Module):
 
         write_memories = self.init_memory(b)
 
-        read_memories = default(read_memories, x[:, 0:0])
-        read_mem_length = read_memories.shape[-2]
+        if exists(read_memories):
+            read_mem_length = mem_length
+            read_memories = read_memories + self.read_memory_emb
+        else:
+            read_mem_length = 0
+            read_memories = x[:, 0:0]
 
         # concat to main sequence using einop's pack
 
