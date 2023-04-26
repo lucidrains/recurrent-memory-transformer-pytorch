@@ -181,3 +181,14 @@ loss = model(seq, memory_replay_backprop = True) # memory efficient training fro
     version = {v0.1-alpha},
     year    = {2021}}
 ```
+
+```bibtex
+@inproceedings{anonymous2022normformer,
+    title   = {NormFormer: Improved Transformer Pretraining with Extra Normalization},
+    author  = {Anonymous},
+    booktitle = {Submitted to The Tenth International Conference on Learning Representations },
+    year    = {2022},
+    url     = {https://openreview.net/forum?id=GMYWzWztDx5},
+    note    = {under review}
+}
+```
