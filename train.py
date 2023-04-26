@@ -20,7 +20,7 @@ VALIDATE_EVERY = 100
 PRIME_LENGTH = 128
 GENERATE_EVERY = 250
 GENERATE_LENGTH = 2048
-SEQ_LEN = 8192
+SEQ_LEN = 2048
 
 # helpers
 
@@ -46,7 +46,9 @@ model = RecurrentMemoryTransformer(
     heads = 8,
     seq_len = 512,
     use_flash_attn = True,
-    num_memory_tokens = 128
+    num_memory_tokens = 128,
+    use_xl_memories = True,
+    xl_mem_len = 256
 )
 
 model = RecurrentMemoryTransformerWrapper(model)
