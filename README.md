@@ -103,6 +103,7 @@ loss = model(seq, memory_replay_backprop = True) # memory efficient training fro
 ## Todo
 
 - [ ] get rotary embeddings working properly with xl memories
+- [ ] test on long context genomics, do bidirectional RMT on reverse complement and concat
 
 - [x] add xl memories, detached
 - [x] offer a way to turn off rotary embeddings, absolute positional embeddings, and add token shift
