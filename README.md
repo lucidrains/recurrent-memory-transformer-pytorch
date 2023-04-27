@@ -6,6 +6,8 @@ Implementation of <a href="https://arxiv.org/abs/2207.06881">Recurrent Memory Tr
 
 There is no doubt in my mind that RMT would make a stronger RL agent than <a href="https://sites.google.com/view/adaptive-agent/">AdA</a>, which is just a Transformer-XL
 
+<a href="https://www.youtube.com/watch?v=4Cclp6yPDuw">Yannic Kilcher paper review</a>
+
 ## Appreciation
 
 - <a href="https://stability.ai/">Stability</a> and <a href="https://huggingface.co/">🤗 Huggingface</a> for their generous sponsorships to work on and open source cutting edge artificial intelligence research
