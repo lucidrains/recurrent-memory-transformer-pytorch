@@ -210,7 +210,7 @@ class RecurrentMemoryTransformer(nn.Module):
         abs_pos_emb = True,
         rotary_pos_emb = False,
         token_shift = True,
-        use_xl_memories = False,
+        use_xl_memories = True,
         xl_mem_len = None,
         enhanced_xl_recurrence = False,     # add simple method for enhancing receptive field of xl memories, from ernie-doc paper
         emb_gradient_frac = 0.1,            # trick from cogview paper that leads to a bit more stability
