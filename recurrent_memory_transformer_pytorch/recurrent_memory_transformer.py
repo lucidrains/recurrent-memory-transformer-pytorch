@@ -241,7 +241,7 @@ class RecurrentMemoryTransformer(nn.Module):
 
         self.num_memory_tokens = num_memory_tokens
 
-        self.read_memory_emb = nn.Parameter(torch.zeros(dim))
+        self.read_memory_emb = nn.Parameter(torch.zeros(num_memory_tokens, dim))
         nn.init.normal_(self.read_memory_emb, std = 0.02)
 
         self.memory_tokens = nn.Parameter(torch.randn(num_memory_tokens, dim))
