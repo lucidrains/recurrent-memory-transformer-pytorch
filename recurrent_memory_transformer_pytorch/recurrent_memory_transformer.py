@@ -2,11 +2,12 @@ import math
 from functools import partial
 from itertools import zip_longest
 from contextlib import nullcontext
-from typing import Optional, List
+
+from typing import Optional, List, Tuple
 
 import torch
 import torch.nn.functional as F
-from torch import nn, einsum
+from torch import nn, einsum, Tensor
 
 from einops import rearrange, repeat, pack, unpack
 
@@ -155,7 +156,7 @@ class Attention(nn.Module):
     def forward(
         self,
         x,
-        rotary_emb = None,
+        rotary_emb: Optional[Tuple[Tensor, Tensor]] = None,
         mask = None,
         xl_memories = None
     ):
@@ -178,8 +179,10 @@ class Attention(nn.Module):
             mask = F.pad(mask, (xl_memories.shape[-2], 0), value = True)
 
         if exists(rotary_emb):
-            q = apply_rotary_pos_emb(rotary_emb, q)
-            k = apply_rotary_pos_emb(rotary_emb, k)
+            q_rotary_emb, k_rotary_emb = rotary_emb
+
+            q = apply_rotary_pos_emb(q_rotary_emb, q)
+            k = apply_rotary_pos_emb(k_rotary_emb, k)
 
         out = self.attend(q, k, v, mask = mask)
 
@@ -253,8 +256,6 @@ class RecurrentMemoryTransformer(nn.Module):
         self.xl_mem_len = xl_mem_len
 
         self.use_xl_memories = use_xl_memories
-        assert not (rotary_pos_emb and use_xl_memories), 'rotary not compatible with xl memories yet'
-
         self.enhanced_xl_recurrence = enhanced_xl_recurrence
 
         # layers
@@ -295,8 +296,10 @@ class RecurrentMemoryTransformer(nn.Module):
         *,
         mask = None,
         labels = None,
-        xl_memories: Optional[List[torch.Tensor]] = None
+        xl_memories: Optional[List[Tensor]] = None
     ):
+        has_xl_memories = exists(xl_memories) and len(xl_memories) > 0
+
         b, n, device, mem_length, return_loss = *x.shape, x.device, self.num_memory_tokens, exists(labels)
 
         assert n <= self.seq_len
@@ -350,10 +353,31 @@ class RecurrentMemoryTransformer(nn.Module):
         rotary_emb = None
 
         if exists(self.rotary_pos_emb):
-            pos = pos + 10000
-            pos = F.pad(pos, (read_mem_length, mem_length), value = 0)
+            mem_rel_dist = 10000
 
-            rotary_emb = self.rotary_pos_emb(pos)
+            q_pos = pos + mem_rel_dist
+
+            if has_xl_memories:
+                xl_mem_length = xl_memories[0].shape[-2]
+                q_pos += xl_mem_length
+
+            q_pos = F.pad(q_pos, (read_mem_length, mem_length), value = 0)
+            q_rotary_emb = self.rotary_pos_emb(q_pos)
+
+            # kind of confusing at the moment
+            # but the order of the keys are - [xl memories] [read memories] [main sequence] [ write memories]
+            # so the positions are (say xl memory length of 256) - [10001, 10002, 10003 ...] [0, 0, ...] [10256, 10257, ...] [0, 0, ...]
+
+            if has_xl_memories:
+                k_pos = torch.arange(xl_mem_length, device = device) + mem_rel_dist
+                k_pos = torch.cat((k_pos, q_pos), dim = -1)
+                k_rotary_emb = self.rotary_pos_emb(k_pos)
+            else:
+                k_rotary_emb = q_rotary_emb
+
+            rotary_emb = (q_rotary_emb, k_rotary_emb)
+
+        # maybe token shift function
 
         shift_fn = partial(self.maybe_token_shift, ps = ps)
 
@@ -363,7 +387,7 @@ class RecurrentMemoryTransformer(nn.Module):
         xl_memories_iter = iter(xl_memories)
         new_xl_memories = []
 
-        if self.enhanced_xl_recurrence and len(xl_memories) > 1:  # simply shift all the xl memories down by one, so lower layer gets access to representations from layer above
+        if has_xl_memories and self.enhanced_xl_recurrence and len(xl_memories) > 1:  # simply shift all the xl memories down by one, so lower layer gets access to representations from layer above
             xl_memories = [*xl_memories[1:], xl_memories[0]]
 
         # attention and feedforward
@@ -428,7 +452,7 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
         *,
         length,
         memories = None,
-        xl_memories: Optional[List[torch.Tensor]] = None,
+        xl_memories: Optional[List[Tensor]] = None,
         temperature = 1.,
         filter_thres = 0.9
     ):
@@ -482,7 +506,7 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
         memories = None,
         *,
         mask = None,
-        xl_memories: Optional[List[torch.Tensor]] = None,
+        xl_memories: Optional[List[Tensor]] = None,
         return_loss = False,
         labels = None,
         truncate_at_step = None,         # if set, this would override the truncate_at_step at init
