@@ -404,11 +404,13 @@ class RecurrentMemoryTransformer(nn.Module):
 class RecurrentMemoryTransformerWrapper(nn.Module):
     def __init__(
         self,
-        transformer: RecurrentMemoryTransformer
+        transformer: RecurrentMemoryTransformer,
+        truncate_at_step = None  # number of steps before detaching memories (truncated bptt). with memory replay checkpointing, there should be no memory issues, but in case of instability, as reported in initial paper
     ):
         super().__init__()
         self.transformer = transformer
         self.seq_len = transformer.seq_len
+        self.truncate_at_step = truncate_at_step
 
     @torch.no_grad()
     @eval_decorator
@@ -420,7 +422,7 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
         memories = None,
         xl_memories: Optional[List[torch.Tensor]] = None,
         temperature = 1.,
-        filter_thres = 0.9,
+        filter_thres = 0.9
     ):
         assert self.transformer.causal, 'only autoregressive transformers can generate'
 
@@ -475,10 +477,11 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
         xl_memories: Optional[List[torch.Tensor]] = None,
         return_loss = False,
         labels = None,
+        truncate_at_step = None,         # if set, this would override the truncate_at_step at init
         memory_replay_backprop = False,  # whether to have the class do the backwards pass memory efficiently
         mrbp_loss_weight = 1.            # if using memory replay backprop with gradient accumulation, scale loss by this factor ex. (1. / <num grad accum steps>)
     ):
-        seq_len = self.seq_len
+        seq_len, truncate_at_step = self.seq_len, default(truncate_at_step, self.truncate_at_step)
 
         labels = None
         if (return_loss or memory_replay_backprop) and not exists(labels):
@@ -522,10 +525,13 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
         logits = []
         losses = []
 
-        for segment, mask_segment, label_segment, loss_weight in zip_longest(segments, mask_segments, label_segments, segment_length_frac):
+        for step, (segment, mask_segment, label_segment, loss_weight) in enumerate(zip_longest(segments, mask_segments, label_segments, segment_length_frac)):
 
             with forward_context():
                 output, memories, xl_memories = self.transformer(segment, memories, mask = mask_segment, labels = label_segment)
+
+            if exists(truncate_at_step) and divisible_by(step + 1, truncate_at_step):
+                memories = memories.detach()
 
             replay_buffer.append(memories)
 
@@ -556,8 +562,8 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
 
             total_loss = 0.
 
-            for i, segment, segment_memories, segment_xl_memories, mask_segment, label_segment, loss_weight in reversed_inputs:
-                is_first = i == 0
+            for step, segment, segment_memories, segment_xl_memories, mask_segment, label_segment, loss_weight in reversed_inputs:
+                is_first = step == 0
 
                 if exists(segment_memories):
                     segment_memories.requires_grad_()
@@ -575,7 +581,10 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
                 if is_first:
                     continue
 
-                memories_grad.copy_(segment_memories.grad.data)
+                if exists(truncate_at_step) and divisible_by(step, truncate_at_step):
+                    memories_grad.zero_()
+                else:
+                    memories_grad.copy_(segment_memories.grad.data)
 
             return total_loss
 
