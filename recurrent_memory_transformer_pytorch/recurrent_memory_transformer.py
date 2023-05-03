@@ -212,6 +212,7 @@ class RecurrentMemoryTransformer(nn.Module):
         enhanced_xl_recurrence = False,     # add simple method for enhancing receptive field of xl memories, from ernie-doc paper
         emb_gradient_frac = 0.1,            # trick from cogview paper that leads to a bit more stability
         memory_not_causal = True,           # flash attention behaves a bit more optimally if causal mask is not explicitly passed in - but if the memories perform better without a causal mask, it is necessary to have this turned on
+        norm_write_memories = False,
     ):
         super().__init__()
         self.causal = causal
@@ -242,6 +243,8 @@ class RecurrentMemoryTransformer(nn.Module):
 
         self.memory_tokens = nn.Parameter(torch.randn(num_memory_tokens, dim))
         nn.init.normal_(self.memory_tokens, std = 0.02)
+
+        self.write_memories_norm = RMSNorm(dim) if norm_write_memories else None
 
         # xl memories
 
@@ -383,6 +386,11 @@ class RecurrentMemoryTransformer(nn.Module):
         # split out memories using unpack
 
         read_memories, x, write_memories = unpack(x, ps, 'b * d')
+
+        # whether to norm the write memories
+
+        if exists(self.write_memories_norm):
+            write_memories = self.write_memories_norm(write_memories)
 
         # to logits
 
