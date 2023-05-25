@@ -238,3 +238,13 @@ loss = model(seq, memory_replay_backprop = True) # memory efficient training fro
     primaryClass = {cs.CL}
 }
 ```
+
+```bibtex
+@article{Xie2023ResiDualTW,
+  title     = {ResiDual: Transformer with Dual Residual Connections},
+  author    = {Shufang Xie and Huishuai Zhang and Junliang Guo and Xu Tan and Jiang Bian and Hany Hassan Awadalla and Arul Menezes and Tao Qin and Rui Yan},
+  journal   = {ArXiv},
+  year      = {2023},
+  volume    = {abs/2304.14802}
+}
+```

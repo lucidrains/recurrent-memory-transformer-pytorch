@@ -116,7 +116,6 @@ class GEGLU(nn.Module):
 def FeedForward(dim, mult = 4):
     dim_inner = int(dim * mult * 2 / 3)
     return nn.Sequential(
-        RMSNorm(dim),
         Linear(dim, dim_inner * 2, bias = False),
         GEGLU(),
         RMSNorm(dim_inner),
@@ -147,8 +146,6 @@ class Attention(nn.Module):
             use_flash = use_flash_attn
         )
 
-        self.norm = RMSNorm(dim)
-
         self.to_q = Linear(dim, dim_inner)
         self.to_kv = Linear(dim, dim_inner * 2)
         self.to_out = Linear(dim_inner, dim)
@@ -161,8 +158,6 @@ class Attention(nn.Module):
         xl_memories = None
     ):
         h = self.heads
-
-        x = self.norm(x)
 
         q = self.to_q(x)
         k, v = self.to_kv(x).chunk(2, dim = -1)
@@ -215,7 +210,6 @@ class RecurrentMemoryTransformer(nn.Module):
         enhanced_xl_recurrence = False,     # add simple method for enhancing receptive field of xl memories, from ernie-doc paper
         emb_gradient_frac = 0.1,            # trick from cogview paper that leads to a bit more stability
         memory_not_causal = True,           # flash attention behaves a bit more optimally if causal mask is not explicitly passed in - but if the memories perform better without a causal mask, it is necessary to have this turned on
-        norm_write_memories = False,
     ):
         super().__init__()
         self.causal = causal
@@ -247,8 +241,6 @@ class RecurrentMemoryTransformer(nn.Module):
         self.memory_tokens = nn.Parameter(torch.randn(num_memory_tokens, dim))
         nn.init.normal_(self.memory_tokens, std = 0.02)
 
-        self.write_memories_norm = RMSNorm(dim) if norm_write_memories else None
-
         # xl memories
 
         xl_mem_len = default(xl_mem_len, seq_len)
@@ -272,13 +264,13 @@ class RecurrentMemoryTransformer(nn.Module):
                     use_flash_attn = use_flash_attn,
                     use_custom_causal_attn_mask = memory_not_causal
                 ),
-                FeedForward(dim = dim, mult = ff_mult)
+                RMSNorm(dim),
+                FeedForward(dim = dim, mult = ff_mult),
+                RMSNorm(dim)
             ]))
 
-        self.to_logits = nn.Sequential(
-            RMSNorm(dim),
-            nn.Linear(dim, num_tokens)
-        )
+        self.norm = RMSNorm(dim)
+        self.to_logits = nn.Linear(dim, num_tokens)
 
         self.ignore_index = ignore_index
 
@@ -392,13 +384,21 @@ class RecurrentMemoryTransformer(nn.Module):
 
         # attention and feedforward
 
-        for attn, ff in self.layers:
+        residual = x
+
+        for attn, attn_post_norm, ff, ff_post_norm in self.layers:
             attn_out, xl_memories = attn(shift_fn(x), mask = mask, xl_memories = next(xl_memories_iter, None), rotary_emb = rotary_emb)
             new_xl_memories.append(xl_memories)
 
-            x = x + attn_out
+            x = attn_post_norm(x + attn_out)
 
-            x = ff(shift_fn(x)) + x
+            residual = residual + attn_out
+
+            ff_out = ff(shift_fn(x))
+
+            x = ff_post_norm(x + ff_out)
+
+            residual = residual + ff_out
 
         # whether to return xl memories
 
@@ -407,14 +407,13 @@ class RecurrentMemoryTransformer(nn.Module):
         if self.use_xl_memories:
             next_xl_memories = list(map(lambda t: torch.detach(t[..., -self.xl_mem_len:, :]), new_xl_memories))
 
+        # add final norm of residual, as in resiDual paper
+
+        x = x + self.norm(residual)
+
         # split out memories using unpack
 
         read_memories, x, write_memories = unpack(x, ps, 'b * d')
-
-        # whether to norm the write memories
-
-        if exists(self.write_memories_norm):
-            write_memories = self.write_memories_norm(write_memories)
 
         # to logits
 
