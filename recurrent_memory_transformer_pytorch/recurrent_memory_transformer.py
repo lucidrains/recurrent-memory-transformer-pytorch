@@ -210,12 +210,16 @@ class RecurrentMemoryTransformer(nn.Module):
         enhanced_xl_recurrence = False,     # add simple method for enhancing receptive field of xl memories, from ernie-doc paper
         emb_gradient_frac = 0.1,            # trick from cogview paper that leads to a bit more stability
         memory_not_causal = True,           # flash attention behaves a bit more optimally if causal mask is not explicitly passed in - but if the memories perform better without a causal mask, it is necessary to have this turned on
+        resi_dual_scale = 1.,               # in the case of overflows in fp16 on the prenorm branch, set this to a value less than 1.
     ):
         super().__init__()
         self.causal = causal
         self.seq_len = seq_len
 
         self.emb_gradient_frac = emb_gradient_frac
+
+        assert 0 < resi_dual_scale <= 1., 'resiDual scale must be between 0 and 1'
+        self.resi_dual_scale = resi_dual_scale
 
         assert num_memory_tokens > 0
 
@@ -384,7 +388,7 @@ class RecurrentMemoryTransformer(nn.Module):
 
         # attention and feedforward
 
-        residual = x
+        residual = x * self.resi_dual_scale
 
         for attn, attn_post_norm, ff, ff_post_norm in self.layers:
             attn_out, xl_memories = attn(shift_fn(x), mask = mask, xl_memories = next(xl_memories_iter, None), rotary_emb = rotary_emb)
@@ -392,13 +396,13 @@ class RecurrentMemoryTransformer(nn.Module):
 
             x = attn_post_norm(x + attn_out)
 
-            residual = residual + attn_out
+            residual = residual + attn_out * self.resi_dual_scale
 
             ff_out = ff(shift_fn(x))
 
             x = ff_post_norm(x + ff_out)
 
-            residual = residual + ff_out
+            residual = residual + ff_out * self.resi_dual_scale
 
         # whether to return xl memories
 
