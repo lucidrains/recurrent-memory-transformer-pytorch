@@ -80,8 +80,9 @@ class Attend(nn.Module):
         # Check if mask exists and expand to compatible shape
         # The mask is B L, so it would have to be expanded to B H N L
 
-        if exists(mask) and mask.ndim != 4:
-            mask = rearrange(mask, 'b j -> b 1 1 j')
+        if exists(mask):
+            if mask.ndim != 4:
+                mask = rearrange(mask, 'b j -> b 1 1 j')
             mask = mask.expand(-1, heads, q_len, -1)
 
         # Check if there is a compatible device for flash attention
@@ -123,7 +124,8 @@ class Attend(nn.Module):
         # key padding mask
 
         if exists(mask):
-            mask = rearrange(mask, 'b j -> b 1 1 j')
+            if mask.ndim != 4:
+                mask = rearrange(mask, 'b j -> b 1 1 j')
             sim = sim.masked_fill(~mask, -torch.finfo(sim.dtype).max)
 
         # causal mask
