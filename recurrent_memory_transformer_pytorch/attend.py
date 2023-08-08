@@ -83,6 +83,7 @@ class Attend(nn.Module):
         if exists(mask):
             if mask.ndim != 4:
                 mask = rearrange(mask, 'b j -> b 1 1 j')
+
             mask = mask.expand(-1, heads, q_len, -1)
 
         # Check if there is a compatible device for flash attention

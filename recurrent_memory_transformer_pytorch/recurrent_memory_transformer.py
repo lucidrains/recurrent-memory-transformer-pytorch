@@ -341,8 +341,13 @@ class RecurrentMemoryTransformer(nn.Module):
             causal_mask = F.pad(causal_mask, (0, mem_length, read_mem_length, 0), value = False)
             causal_mask = F.pad(causal_mask, (read_mem_length, 0, 0, mem_length), value = True)
 
-            assert not exists(mask)
-            mask = rearrange(causal_mask, 'i j -> 1 1 i j')
+            causal_mask = rearrange(causal_mask, 'i j -> 1 1 i j')
+
+            if exists(mask):
+                mask = rearrange(mask, 'b j -> b 1 1 j')
+                mask = mask & causal_mask
+            else:
+                mask = causal_mask
 
         # rotary embedding - offset main positions by 10000, and keep all memories at position 0
 
