@@ -146,6 +146,8 @@ class Attention(nn.Module):
             use_flash = use_flash_attn
         )
 
+        self.null_kv = nn.Parameter(torch.randn(2, heads, dim_head))
+
         self.to_q = Linear(dim, dim_inner)
         self.to_kv = Linear(dim, dim_inner * 2)
         self.to_out = Linear(dim_inner, dim)
@@ -164,6 +166,20 @@ class Attention(nn.Module):
 
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = h), (q, k, v))
 
+        # add a null key / value
+        # to protect against an entirely masked out sequence
+        # as well as giving attention ability to attend to nothing
+
+        nk, nv = map(lambda t: repeat(t, 'h d -> b h 1 d', b = x.shape[0]), self.null_kv)
+
+        k = torch.cat((nk, k), dim = -2)
+        v = torch.cat((nv, v), dim = -2)
+
+        if exists(mask):
+            mask = F.pad(mask, (1, 0), value = True)
+
+        # manage memories
+
         next_xl_memories = torch.stack((k, v))
 
         if exists(xl_memories):
@@ -171,7 +187,8 @@ class Attention(nn.Module):
             k = torch.cat((kx, k), dim = -2)
             v = torch.cat((vx, v), dim = -2)
 
-            mask = F.pad(mask, (xl_memories.shape[-2], 0), value = True)
+            if exists(mask):
+                mask = F.pad(mask, (xl_memories.shape[-2], 0), value = True)
 
         if exists(rotary_emb):
             q_rotary_emb, k_rotary_emb = rotary_emb
@@ -372,9 +389,14 @@ class RecurrentMemoryTransformer(nn.Module):
             if has_xl_memories:
                 k_pos = torch.arange(xl_mem_length, device = device) + mem_rel_dist
                 k_pos = torch.cat((k_pos, q_pos), dim = -1)
-                k_rotary_emb = self.rotary_pos_emb(k_pos)
             else:
-                k_rotary_emb = q_rotary_emb
+                k_pos = q_pos
+
+            # account for null key / value
+
+            k_pos = F.pad(k_pos, (1, 0), value = mem_rel_dist - 1) # give a null memory token, to allow for attending to nothing
+
+            k_rotary_emb = self.rotary_pos_emb(k_pos)
 
             rotary_emb = (q_rotary_emb, k_rotary_emb)
 
