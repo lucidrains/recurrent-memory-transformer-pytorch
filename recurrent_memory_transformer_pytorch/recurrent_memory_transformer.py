@@ -228,6 +228,7 @@ class RecurrentMemoryTransformer(nn.Module):
         emb_gradient_frac = 0.1,             # trick from cogview paper that leads to a bit more stability
         memory_not_causal = True,            # flash attention behaves a bit more optimally if causal mask is not explicitly passed in - but if the memories perform better without a causal mask, it is necessary to have this turned on
         add_write_to_next_write_mem = False, # add the write memories of previous step to the next write step - thanks to @IcarusWizard for pointing out this discrepancy
+        next_write_mem_stop_grad = True,     # whether to stop gradient of previous read memory -> next write memory
         resi_dual_scale = 1.,                # in the case of overflows in fp16 on the prenorm branch, set this to a value less than 1.
     ):
         super().__init__()
@@ -303,6 +304,7 @@ class RecurrentMemoryTransformer(nn.Module):
         # in the paper, they actually also use the previous write memories for the next write memories
 
         self.add_write_to_next_write_mem = add_write_to_next_write_mem
+        self.next_write_mem_stop_grad = next_write_mem_stop_grad
 
     def init_memory(self, batch):
         return repeat(self.memory_tokens, 'm d -> b m d', b = batch)
@@ -340,7 +342,8 @@ class RecurrentMemoryTransformer(nn.Module):
         write_memories = self.init_memory(b)
 
         if exists(read_memories) and self.add_write_to_next_write_mem:
-            write_memories = write_memories + read_memories
+            maybe_detach = torch.detach if self.next_write_mem_stop_grad else identity
+            write_memories = write_memories + maybe_detach(read_memories)
 
         # prepare read memories
 
