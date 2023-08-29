@@ -224,10 +224,11 @@ class RecurrentMemoryTransformer(nn.Module):
         token_shift = True,
         use_xl_memories = True,
         xl_mem_len = None,
-        enhanced_xl_recurrence = False,     # add simple method for enhancing receptive field of xl memories, from ernie-doc paper
-        emb_gradient_frac = 0.1,            # trick from cogview paper that leads to a bit more stability
-        memory_not_causal = True,           # flash attention behaves a bit more optimally if causal mask is not explicitly passed in - but if the memories perform better without a causal mask, it is necessary to have this turned on
-        resi_dual_scale = 1.,               # in the case of overflows in fp16 on the prenorm branch, set this to a value less than 1.
+        enhanced_xl_recurrence = False,      # add simple method for enhancing receptive field of xl memories, from ernie-doc paper
+        emb_gradient_frac = 0.1,             # trick from cogview paper that leads to a bit more stability
+        memory_not_causal = True,            # flash attention behaves a bit more optimally if causal mask is not explicitly passed in - but if the memories perform better without a causal mask, it is necessary to have this turned on
+        add_write_to_next_write_mem = False, # add the write memories of previous step to the next write step - thanks to @IcarusWizard for pointing out this discrepancy
+        resi_dual_scale = 1.,                # in the case of overflows in fp16 on the prenorm branch, set this to a value less than 1.
     ):
         super().__init__()
         self.causal = causal
@@ -299,6 +300,10 @@ class RecurrentMemoryTransformer(nn.Module):
 
         self.use_custom_causal_attn_mask = causal and memory_not_causal
 
+        # in the paper, they actually also use the previous write memories for the next write memories
+
+        self.add_write_to_next_write_mem = add_write_to_next_write_mem
+
     def init_memory(self, batch):
         return repeat(self.memory_tokens, 'm d -> b m d', b = batch)
 
@@ -330,9 +335,14 @@ class RecurrentMemoryTransformer(nn.Module):
 
         x = frac_gradient(x, self.emb_gradient_frac)
 
-        # prepare read and write memories, as in paper
+        # prepare write memories, as in paper
 
-        write_memories = self.init_memory(b)
+        if exists(read_memories) and self.add_write_to_next_write_mem:
+            write_memories = read_memories
+        else:
+            write_memories = self.init_memory(b)
+
+        # prepare read memories
 
         if exists(read_memories):
             read_mem_length = mem_length
