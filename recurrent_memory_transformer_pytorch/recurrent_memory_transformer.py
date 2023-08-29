@@ -337,10 +337,10 @@ class RecurrentMemoryTransformer(nn.Module):
 
         # prepare write memories, as in paper
 
+        write_memories = self.init_memory(b)
+
         if exists(read_memories) and self.add_write_to_next_write_mem:
-            write_memories = read_memories
-        else:
-            write_memories = self.init_memory(b)
+            write_memories = write_memories + read_memories
 
         # prepare read memories
 
