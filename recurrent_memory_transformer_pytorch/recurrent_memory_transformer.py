@@ -322,7 +322,8 @@ class RecurrentMemoryTransformer(nn.Module):
         *,
         mask = None,
         labels = None,
-        xl_memories: Optional[List[Tensor]] = None
+        xl_memories: Optional[List[Tensor]] = None,
+        mask_out_read_memories = False   # in the case one is passing in 0s for read memories, for onnx-able model
     ):
         has_xl_memories = exists(xl_memories) and len(xl_memories) > 0
 
@@ -354,6 +355,9 @@ class RecurrentMemoryTransformer(nn.Module):
         # prepare read memories
 
         if exists(read_memories):
+            if read_memories.ndim == 2:
+                read_memories = repeat(read_memories, 'n d -> b n d', b = b)
+
             read_mem_length = mem_length
             read_memories = read_memories + self.read_memory_emb
         elif self.always_have_read_memories:
@@ -387,6 +391,16 @@ class RecurrentMemoryTransformer(nn.Module):
                 mask = mask & causal_mask
             else:
                 mask = causal_mask
+
+        # masking out read memories, either for passing in 0s for read memories on first step, or if you are doing some regularization game on the memories
+
+        if read_mem_length > 0 and mask_out_read_memories:
+            read_mem_mask = torch.arange(x.shape[-2], device = device) < read_mem_length
+
+            if exists(mask):
+                mask = mask & ~read_mem_mask
+            else:
+                mask = read_mem_mask
 
         # rotary embedding - offset main positions by 10000, and keep all memories at position 0
 
