@@ -229,6 +229,7 @@ class RecurrentMemoryTransformer(nn.Module):
         memory_not_causal = True,            # flash attention behaves a bit more optimally if causal mask is not explicitly passed in - but if the memories perform better without a causal mask, it is necessary to have this turned on
         add_write_to_next_write_mem = False, # add the write memories of previous step to the next write step - thanks to @IcarusWizard for pointing out this discrepancy
         next_write_mem_stop_grad = True,     # whether to stop gradient of previous read memory -> next write memory
+        always_have_read_memories = True,    # whether to always have read memories, even on the first step, so to make the model onnx-able
         resi_dual_scale = 1.,                # in the case of overflows in fp16 on the prenorm branch, set this to a value less than 1.
     ):
         super().__init__()
@@ -306,6 +307,11 @@ class RecurrentMemoryTransformer(nn.Module):
         self.add_write_to_next_write_mem = add_write_to_next_write_mem
         self.next_write_mem_stop_grad = next_write_mem_stop_grad
 
+        # allow for attending to raw read memory positional embeddings on first step
+        # hack to make it onnx-able and should not hurt
+
+        self.always_have_read_memories = always_have_read_memories
+
     def init_memory(self, batch):
         return repeat(self.memory_tokens, 'm d -> b m d', b = batch)
 
@@ -350,6 +356,9 @@ class RecurrentMemoryTransformer(nn.Module):
         if exists(read_memories):
             read_mem_length = mem_length
             read_memories = read_memories + self.read_memory_emb
+        elif self.always_have_read_memories:
+            read_mem_length = mem_length
+            read_memories = repeat(self.read_memory_emb, 'n d -> b n d', b = b)
         else:
             read_mem_length = 0
             read_memories = x[:, 0:0]
