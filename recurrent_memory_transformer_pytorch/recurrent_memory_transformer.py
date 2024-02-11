@@ -113,12 +113,13 @@ class GEGLU(nn.Module):
         x, gate = x.chunk(2, dim = -1)
         return x * F.gelu(gate)
 
-def FeedForward(dim, mult = 4):
+def FeedForward(dim, mult = 4, dropout = 0.):
     dim_inner = int(dim * mult * 2 / 3)
     return nn.Sequential(
         Linear(dim, dim_inner * 2, bias = False),
         GEGLU(),
         RMSNorm(dim_inner),
+        nn.Dropout(dropout),
         Linear(dim_inner, dim, bias = False)
     )
 
@@ -217,6 +218,8 @@ class RecurrentMemoryTransformer(nn.Module):
         dim_head = 64,
         heads = 8,
         ff_mult = 4,
+        attn_dropout = 0.,
+        ff_dropout = 0.,
         use_flash_attn = False,
         ignore_index = -1,
         abs_pos_emb = True,
@@ -286,10 +289,11 @@ class RecurrentMemoryTransformer(nn.Module):
                     causal = causal,
                     heads = heads,
                     use_flash_attn = use_flash_attn,
-                    use_custom_causal_attn_mask = memory_not_causal
+                    use_custom_causal_attn_mask = memory_not_causal,
+                    dropout = attn_dropout
                 ),
                 RMSNorm(dim),
-                FeedForward(dim = dim, mult = ff_mult),
+                FeedForward(dim = dim, mult = ff_mult, dropout = ff_dropout),
                 RMSNorm(dim)
             ]))
 
