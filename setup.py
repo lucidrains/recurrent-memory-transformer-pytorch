@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
   name = 'recurrent-memory-transformer-pytorch',
   packages = find_packages(exclude=[]),
-  version = '0.5.6',
+  version = '0.6.0',
   license='MIT',
   description = 'Recurrent Memory Transformer - Pytorch',
   author = 'Phil Wang',
@@ -20,8 +20,9 @@ setup(
     'long-context'
   ],
   install_requires=[
-    'einops>=0.6.1',
-    'torch>=1.6',
+    'einops>=0.8.0',
+    'hyper-connections>=0.1.7',
+    'torch>=2.3',
   ],
   classifiers=[
     'Development Status :: 4 - Beta',

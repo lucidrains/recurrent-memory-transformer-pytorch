@@ -240,11 +240,12 @@ loss = model(seq, memory_replay_backprop = True) # memory efficient training fro
 ```
 
 ```bibtex
-@article{Xie2023ResiDualTW,
-  title     = {ResiDual: Transformer with Dual Residual Connections},
-  author    = {Shufang Xie and Huishuai Zhang and Junliang Guo and Xu Tan and Jiang Bian and Hany Hassan Awadalla and Arul Menezes and Tao Qin and Rui Yan},
-  journal   = {ArXiv},
-  year      = {2023},
-  volume    = {abs/2304.14802}
+@article{Zhu2024HyperConnections,
+    title   = {Hyper-Connections},
+    author  = {Defa Zhu and Hongzhi Huang and Zihao Huang and Yutao Zeng and Yunyao Mao and Banggu Wu and Qiyang Min and Xun Zhou},
+    journal = {ArXiv},
+    year    = {2024},
+    volume  = {abs/2409.19606},
+    url     = {https://api.semanticscholar.org/CorpusID:272987528}
 }
 ```

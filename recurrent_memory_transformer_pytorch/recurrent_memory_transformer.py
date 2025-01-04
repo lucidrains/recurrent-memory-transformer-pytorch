@@ -1,17 +1,20 @@
+from __future__ import annotations
+
 import math
 from functools import partial
 from itertools import zip_longest
 from contextlib import nullcontext
 
-from typing import Optional, List, Tuple
-
 import torch
 import torch.nn.functional as F
+from torch.nn import Module, ModuleList
 from torch import nn, einsum, Tensor
 
 from einops import rearrange, repeat, pack, unpack
 
 from recurrent_memory_transformer_pytorch.attend import Attend
+
+from hyper_connections import get_init_and_expand_reduce_stream_functions
 
 # constants
 
@@ -62,13 +65,6 @@ def top_k(logits, thres = 0.9):
     probs.scatter_(1, ind, val)
     return probs
 
-def token_shift_fn(t, ps):
-    read_mem, t, write_mem = unpack(t, ps, 'b * d')
-    t, t_shift = t.chunk(2, dim = -1)
-    t_shift = F.pad(t_shift, (0, 0, 1, -1), value = 0.)
-    t = torch.cat((t, t_shift), dim = -1)
-    return torch.cat((read_mem, t, write_mem), dim = -2)
-
 def frac_gradient(t, frac = 1.):
     if frac == 1.:
         return t
@@ -77,7 +73,7 @@ def frac_gradient(t, frac = 1.):
 
 # rotary embedding
 
-class RotaryEmbedding(nn.Module):
+class RotaryEmbedding(Module):
     def __init__(self, dim, theta = 32768):
         super().__init__()
         inv_freq = 1. / (theta ** (torch.arange(0, dim, 2).float() / dim))
@@ -95,37 +91,27 @@ def rotate_half(x):
 def apply_rotary_pos_emb(pos, t):
     return (t * pos.cos()) + (rotate_half(t) * pos.sin())
 
-# norms
-
-class RMSNorm(nn.Module):
-    def __init__(self, dim):
-        super().__init__()
-        self.scale = dim ** 0.5
-        self.gamma = nn.Parameter(torch.ones(dim))
-
-    def forward(self, x):
-        return F.normalize(x, dim = -1) * self.scale * self.gamma
-
 # feedforward
 
-class GEGLU(nn.Module):
+class GEGLU(Module):
     def forward(self, x):
         x, gate = x.chunk(2, dim = -1)
         return x * F.gelu(gate)
 
 def FeedForward(dim, mult = 4, dropout = 0.):
     dim_inner = int(dim * mult * 2 / 3)
+
     return nn.Sequential(
-        Linear(dim, dim_inner * 2, bias = False),
+        nn.RMSNorm(dim),
+        Linear(dim, dim_inner * 2),
         GEGLU(),
-        RMSNorm(dim_inner),
         nn.Dropout(dropout),
-        Linear(dim_inner, dim, bias = False)
+        Linear(dim_inner, dim)
     )
 
 # attention
 
-class Attention(nn.Module):
+class Attention(Module):
     def __init__(
         self,
         *,
@@ -138,6 +124,8 @@ class Attention(nn.Module):
         use_custom_causal_attn_mask = False
     ):
         super().__init__()
+        self.norm = nn.RMSNorm(dim)
+
         dim_inner = dim_head * heads
         self.heads = heads
 
@@ -156,11 +144,13 @@ class Attention(nn.Module):
     def forward(
         self,
         x,
-        rotary_emb: Optional[Tuple[Tensor, Tensor]] = None,
+        rotary_emb: tuple[Tensor, Tensor] | None = None,
         mask = None,
         xl_memories = None
     ):
         h = self.heads
+        x = self.norm(x)
+
 
         q = self.to_q(x)
         k, v = self.to_kv(x).chunk(2, dim = -1)
@@ -205,7 +195,7 @@ class Attention(nn.Module):
 
 # transformer
 
-class RecurrentMemoryTransformer(nn.Module):
+class RecurrentMemoryTransformer(Module):
     def __init__(
         self,
         dim,
@@ -224,7 +214,6 @@ class RecurrentMemoryTransformer(nn.Module):
         ignore_index = -1,
         abs_pos_emb = True,
         rotary_pos_emb = False,
-        token_shift = True,
         use_xl_memories = True,
         xl_mem_len = None,
         enhanced_xl_recurrence = False,      # add simple method for enhancing receptive field of xl memories, from ernie-doc paper
@@ -233,7 +222,7 @@ class RecurrentMemoryTransformer(nn.Module):
         add_write_to_next_write_mem = False, # add the write memories of previous step to the next write step - thanks to @IcarusWizard for pointing out this discrepancy
         next_write_mem_stop_grad = True,     # whether to stop gradient of previous read memory -> next write memory
         always_have_read_memories = True,    # whether to always have read memories, even on the first step, so to make the model onnx-able
-        resi_dual_scale = 1.,                # in the case of overflows in fp16 on the prenorm branch, set this to a value less than 1.
+        num_residual_streams = 4             # number of residual streams for hyper connections
     ):
         super().__init__()
         self.causal = causal
@@ -241,22 +230,17 @@ class RecurrentMemoryTransformer(nn.Module):
 
         self.emb_gradient_frac = emb_gradient_frac
 
-        assert 0 < resi_dual_scale <= 1., 'resiDual scale must be between 0 and 1'
-        self.resi_dual_scale = resi_dual_scale
-
         assert num_memory_tokens > 0
 
         self.token_emb = nn.Embedding(num_tokens, dim)
 
         # positions
 
-        assert any([abs_pos_emb, rotary_pos_emb, token_shift])
+        assert any([abs_pos_emb, rotary_pos_emb])
 
         self.pos_emb = nn.Embedding(seq_len, dim) if abs_pos_emb else None
 
         self.rotary_pos_emb = RotaryEmbedding(dim_head) if rotary_pos_emb else None
-
-        self.maybe_token_shift = token_shift_fn if token_shift else identity
 
         # memory related
 
@@ -277,13 +261,17 @@ class RecurrentMemoryTransformer(nn.Module):
         self.use_xl_memories = use_xl_memories
         self.enhanced_xl_recurrence = enhanced_xl_recurrence
 
+        # hyper connections
+
+        init_hyper_conn, self.expand_streams, self.reduce_streams = get_init_and_expand_reduce_stream_functions(num_residual_streams, disable = num_residual_streams == 1)
+
         # layers
 
-        self.layers = nn.ModuleList([])
+        self.layers = ModuleList([])
 
         for _ in range(depth):
-            self.layers.append(nn.ModuleList([
-                Attention(
+            self.layers.append(ModuleList([
+                init_hyper_conn(dim = dim, branch = Attention(
                     dim = dim,
                     dim_head = dim_head,
                     causal = causal,
@@ -291,13 +279,11 @@ class RecurrentMemoryTransformer(nn.Module):
                     use_flash_attn = use_flash_attn,
                     use_custom_causal_attn_mask = memory_not_causal,
                     dropout = attn_dropout
-                ),
-                RMSNorm(dim),
-                FeedForward(dim = dim, mult = ff_mult, dropout = ff_dropout),
-                RMSNorm(dim)
+                )),
+                init_hyper_conn(dim = dim, branch = FeedForward(dim = dim, mult = ff_mult, dropout = ff_dropout)),
             ]))
 
-        self.norm = RMSNorm(dim)
+        self.norm = nn.RMSNorm(dim)
         self.to_logits = nn.Linear(dim, num_tokens)
 
         self.ignore_index = ignore_index
@@ -326,7 +312,7 @@ class RecurrentMemoryTransformer(nn.Module):
         *,
         mask = None,
         labels = None,
-        xl_memories: Optional[List[Tensor]] = None,
+        xl_memories: list[Tensor] | None = None,
         mask_out_read_memories = False   # in the case one is passing in 0s for read memories, for onnx-able model
     ):
         has_xl_memories = exists(xl_memories) and len(xl_memories) > 0
@@ -440,10 +426,6 @@ class RecurrentMemoryTransformer(nn.Module):
 
             rotary_emb = (q_rotary_emb, k_rotary_emb)
 
-        # maybe token shift function
-
-        shift_fn = partial(self.maybe_token_shift, ps = ps)
-
         # prepare xl memories
 
         xl_memories = default(xl_memories, [])
@@ -453,23 +435,26 @@ class RecurrentMemoryTransformer(nn.Module):
         if has_xl_memories and self.enhanced_xl_recurrence and len(xl_memories) > 1:  # simply shift all the xl memories down by one, so lower layer gets access to representations from layer above
             xl_memories = [*xl_memories[1:], xl_memories[0]]
 
+        # expand streams for hyper connections
+
+        x = self.expand_streams(x)
+
         # attention and feedforward
 
-        residual = x * self.resi_dual_scale
+        for attn, ff in self.layers:
+            x, xl_memories = attn(x, mask = mask, xl_memories = next(xl_memories_iter, None), rotary_emb = rotary_emb)
 
-        for attn, attn_post_norm, ff, ff_post_norm in self.layers:
-            attn_out, xl_memories = attn(shift_fn(x), mask = mask, xl_memories = next(xl_memories_iter, None), rotary_emb = rotary_emb)
             new_xl_memories.append(xl_memories)
 
-            x = attn_post_norm(x + attn_out)
+            x = ff(x)
 
-            residual = residual + attn_out * self.resi_dual_scale
+        # reduce streams for hyper connections
 
-            ff_out = ff(shift_fn(x))
+        x = self.reduce_streams(x)
 
-            x = ff_post_norm(x + ff_out)
+        # final norm
 
-            residual = residual + ff_out * self.resi_dual_scale
+        x = self.norm(x)
 
         # whether to return xl memories
 
@@ -477,10 +462,6 @@ class RecurrentMemoryTransformer(nn.Module):
 
         if self.use_xl_memories:
             next_xl_memories = list(map(lambda t: torch.detach(t[..., -self.xl_mem_len:, :]), new_xl_memories))
-
-        # add final norm of residual, as in resiDual paper
-
-        x = x + self.norm(residual)
 
         # split out memories using unpack
 
@@ -503,7 +484,7 @@ class RecurrentMemoryTransformer(nn.Module):
 
 # wrapper to manage many segments
 
-class RecurrentMemoryTransformerWrapper(nn.Module):
+class RecurrentMemoryTransformerWrapper(Module):
     def __init__(
         self,
         transformer: RecurrentMemoryTransformer,
@@ -522,7 +503,7 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
         *,
         length,
         memories = None,
-        xl_memories: Optional[List[Tensor]] = None,
+        xl_memories: list[Tensor] | None = None,
         temperature = 1.,
         filter_thres = 0.9
     ):
@@ -576,7 +557,7 @@ class RecurrentMemoryTransformerWrapper(nn.Module):
         memories = None,
         *,
         mask = None,
-        xl_memories: Optional[List[Tensor]] = None,
+        xl_memories: list[Tensor] | None = None,
         return_loss = False,
         labels = None,
         truncate_at_step = None,         # if set, this would override the truncate_at_step at init
