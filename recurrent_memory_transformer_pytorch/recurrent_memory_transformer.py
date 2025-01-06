@@ -11,6 +11,7 @@ from torch.nn import Module, ModuleList
 from torch import nn, einsum, Tensor
 
 from einops import rearrange, repeat, pack, unpack
+from einops.layers.torch import Rearrange
 
 from recurrent_memory_transformer_pytorch.attend import Attend
 
@@ -120,6 +121,7 @@ class Attention(Module):
         dim_head = 64,
         heads = 8,
         dropout = 0.,
+        accept_value_residual = False,
         use_flash_attn = False,
         use_custom_causal_attn_mask = False
     ):
@@ -141,21 +143,44 @@ class Attention(Module):
         self.to_kv = Linear(dim, dim_inner * 2)
         self.to_out = Linear(dim_inner, dim)
 
+        # learned value residual mixing
+
+        self.learned_value_residual_mix = None
+
+        if accept_value_residual:
+            self.learned_value_residual_mix = nn.Sequential(
+                Linear(dim, heads),
+                Rearrange('b n h -> b h n 1'),
+                nn.Sigmoid()
+            )
+
     def forward(
         self,
         x,
         rotary_emb: tuple[Tensor, Tensor] | None = None,
         mask = None,
-        xl_memories = None
+        xl_memories = None,
+        value_residual = None
     ):
+        assert not (exists(value_residual) ^ exists(self.learned_value_residual_mix))
+
         h = self.heads
         x = self.norm(x)
-
 
         q = self.to_q(x)
         k, v = self.to_kv(x).chunk(2, dim = -1)
 
+        # split heads
+
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = h), (q, k, v))
+
+        # handle value residual
+
+        orig_v = v
+
+        if exists(self.learned_value_residual_mix):
+            mix = self.learned_value_residual_mix(x)
+            v = v.lerp(value_residual, mix)
 
         # add a null key / value
         # to protect against an entirely masked out sequence
@@ -191,7 +216,7 @@ class Attention(Module):
 
         out = rearrange(out, 'b h n d -> b n (h d)')
 
-        return self.to_out(out), next_xl_memories
+        return self.to_out(out), next_xl_memories, orig_v
 
 # transformer
 
@@ -269,7 +294,9 @@ class RecurrentMemoryTransformer(Module):
 
         self.layers = ModuleList([])
 
-        for _ in range(depth):
+        for layer_index in range(depth):
+            is_first = layer_index == 0
+
             self.layers.append(ModuleList([
                 init_hyper_conn(dim = dim, branch = Attention(
                     dim = dim,
@@ -277,6 +304,7 @@ class RecurrentMemoryTransformer(Module):
                     causal = causal,
                     heads = heads,
                     use_flash_attn = use_flash_attn,
+                    accept_value_residual = not is_first,
                     use_custom_causal_attn_mask = memory_not_causal,
                     dropout = attn_dropout
                 )),
@@ -435,6 +463,10 @@ class RecurrentMemoryTransformer(Module):
         if has_xl_memories and self.enhanced_xl_recurrence and len(xl_memories) > 1:  # simply shift all the xl memories down by one, so lower layer gets access to representations from layer above
             xl_memories = [*xl_memories[1:], xl_memories[0]]
 
+        # value residual
+
+        value_residual = None
+
         # expand streams for hyper connections
 
         x = self.expand_streams(x)
@@ -442,8 +474,9 @@ class RecurrentMemoryTransformer(Module):
         # attention and feedforward
 
         for attn, ff in self.layers:
-            x, xl_memories = attn(x, mask = mask, xl_memories = next(xl_memories_iter, None), rotary_emb = rotary_emb)
+            x, xl_memories, attn_values = attn(x, mask = mask, xl_memories = next(xl_memories_iter, None), rotary_emb = rotary_emb, value_residual = value_residual)
 
+            value_residual = default(value_residual, attn_values)
             new_xl_memories.append(xl_memories)
 
             x = ff(x)
